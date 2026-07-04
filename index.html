@@ -26,10 +26,11 @@
   #canvas3d { width:100%; height:100%; display:block; }
   .group { margin-bottom:16px; border:1px solid #e5eaf0; border-radius:8px; padding:12px; }
   .group h3 { font-size:13px; color:#1a2b3c; margin-bottom:10px; border-left:3px solid #e67e22; padding-left:8px; }
-  .row { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:8px; }
-  .row label { font-size:12.5px; color:#444; flex-shrink:0; }
-  .row input[type=range] { flex:1; accent-color:#e67e22; }
-  .row .val { width:74px; text-align:right; }
+  /* 兩行式排版：第一行＝標籤＋數值，第二行＝滑桿（長標籤/各語言都不會擠出面板） */
+  .row { display:flex; flex-wrap:wrap; align-items:center; margin-bottom:12px; gap:4px 8px; }
+  .row label { font-size:12.5px; color:#444; flex:1; order:1; min-width:0; }
+  .row .val { order:2; display:flex; align-items:center; gap:3px; flex-shrink:0; }
+  .row input[type=range] { order:3; flex-basis:100%; width:100%; accent-color:#e67e22; margin:0; }
   .row .val input { width:52px; font-size:12px; padding:2px 4px; border:1px solid #ccc; border-radius:4px; text-align:right; }
   .row .val span { font-size:11px; color:#888; }
   .shape-btns, .drain-btns { display:flex; gap:6px; flex-wrap:wrap; }
@@ -67,6 +68,14 @@
   .sk-actions .ok { background:#e67e22; color:#fff; border:none; padding:9px 22px; border-radius:6px; font-weight:600; cursor:pointer; }
   .sk-actions .cancel { background:#eee; border:none; padding:9px 18px; border-radius:6px; cursor:pointer; }
   #skErr { color:#c0392b; font-size:12px; margin-top:8px; display:none; }
+  /* 窄螢幕（手機/窄視窗）：面板改為上下堆疊 */
+  @media (max-width: 700px){
+    main { flex-direction: column; overflow-y:auto; }
+    #panel { width:100%; border-right:none; border-bottom:1px solid #dde3ea; max-height:55vh; }
+    #viewer { min-height:45vh; }
+    header h1 { font-size:15px; }
+    header .sub { display:none; }
+  }
 </style>
 </head>
 <body>
