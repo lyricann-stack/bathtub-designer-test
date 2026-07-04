@@ -418,8 +418,9 @@ function buildTub(){
   if(P.water){
     const wd = inn.D*0.72, wl = P.b + wd;
     const vw = wd/inn.D, kw = wallK(vw, s, 1.03)*0.97;
+    // 注意：ExtrudeGeometry 經 rotateX(-90°) 後 z=-y，須先鏡射 y 才會與缸體放樣座標一致（不對稱形狀才對得上）
     const shape = new THREE.Shape();
-    innerPts.forEach((p,i)=>{ i===0 ? shape.moveTo(p[0]*kw, p[1]*kw) : shape.lineTo(p[0]*kw, p[1]*kw); });
+    innerPts.forEach((p,i)=>{ i===0 ? shape.moveTo(p[0]*kw, -p[1]*kw) : shape.lineTo(p[0]*kw, -p[1]*kw); });
     shape.closePath();
     const water = new THREE.Mesh(
       new THREE.ExtrudeGeometry(shape, {depth:wd, bevelEnabled:false}),
