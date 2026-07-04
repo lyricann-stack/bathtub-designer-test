@@ -46,6 +46,23 @@
   .flow b { color:#e67e22; }
   #hint { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); background:rgba(26,43,60,.75); color:#fff; font-size:11.5px; padding:6px 14px; border-radius:20px; pointer-events:none; }
   #warn { color:#c0392b; font-size:12px; margin-top:4px; display:none; }
+  /* 手繪模式 */
+  #sketchModal { display:none; position:fixed; inset:0; background:rgba(15,25,35,.55); z-index:100; align-items:center; justify-content:center; }
+  #sketchModal.open { display:flex; }
+  .sk-box { background:#fff; border-radius:12px; padding:18px 20px; width:min(760px, 94vw); max-height:92vh; overflow-y:auto; }
+  .sk-box h2 { font-size:16px; color:#1a2b3c; margin-bottom:4px; }
+  .sk-box .sk-sub { font-size:12px; color:#777; margin-bottom:12px; }
+  .sk-flex { display:flex; gap:18px; flex-wrap:wrap; }
+  .sk-col h4 { font-size:13px; color:#e67e22; margin-bottom:6px; }
+  .sk-col .desc { font-size:11.5px; color:#666; line-height:1.5; margin-bottom:6px; max-width:340px; }
+  canvas.pad { border:2px solid #dde3ea; border-radius:8px; background:#fff; cursor:crosshair; touch-action:none; display:block; }
+  .sk-tools { display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap; }
+  .sk-tools button, .sk-tools label.upl { padding:6px 12px; font-size:12px; border:1px solid #ccc; background:#fafafa; border-radius:6px; cursor:pointer; }
+  .sk-tools label.upl { color:#2980b9; border-color:#2980b9; }
+  .sk-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:16px; }
+  .sk-actions .ok { background:#e67e22; color:#fff; border:none; padding:9px 22px; border-radius:6px; font-weight:600; cursor:pointer; }
+  .sk-actions .cancel { background:#eee; border:none; padding:9px 18px; border-radius:6px; cursor:pointer; }
+  #skErr { color:#c0392b; font-size:12px; margin-top:8px; display:none; }
 </style>
 </head>
 <body>
@@ -67,6 +84,7 @@
         <button data-shape="rect" onclick="setShape('rect',this)">圓角矩形</button>
         <button data-shape="stadium" onclick="setShape('stadium',this)">圓端形</button>
         <button data-shape="ellipse" class="active" onclick="setShape('ellipse',this)">橢圓形</button>
+        <button data-shape="custom" onclick="openSketch()">✏️ 手繪</button>
       </div>
       <button class="preset" onclick="applyPhotoPreset()">★ 套用照片款：不對稱蛋形缸</button>
     </div>
@@ -133,12 +151,47 @@
   </div>
 </main>
 
+<!-- 手繪模式對話框 -->
+<div id="sketchModal">
+  <div class="sk-box">
+    <h2>✏️ 手繪你的浴缸形狀</h2>
+    <div class="sk-sub">畫出獨一無二的浴缸 — 系統會自動把手繪線條轉成流暢曲線並建成 3D 模型，之後仍可調整所有尺寸參數。</div>
+    <div class="sk-flex">
+      <div class="sk-col">
+        <h4>① 俯視缸口形狀（必畫）</h4>
+        <div class="desc">從正上方看的缸口輪廓。畫一個<b>封閉</b>的形狀（頭尾會自動接起來）。也可以把紙上手稿拍照上傳（深色筆、白紙、光線均勻）。</div>
+        <canvas id="padTop" class="pad" width="360" height="260"></canvas>
+        <div class="sk-tools">
+          <button onclick="clearPad('top')">清除重畫</button>
+          <label class="upl">📷 上傳手稿照片<input type="file" id="uplTop" accept="image/*" style="display:none"></label>
+        </div>
+      </div>
+      <div class="sk-col">
+        <h4>② 側面牆壁剖面（選畫）</h4>
+        <div class="desc">左邊虛線＝浴缸中心線。<b>由下往上</b>畫出單邊外牆曲線（例：底部內收、中段外鼓）。不畫則由「底部收縮」參數控制。</div>
+        <canvas id="padSide" class="pad" width="300" height="260"></canvas>
+        <div class="sk-tools">
+          <button onclick="clearPad('side')">清除重畫</button>
+          <button onclick="clearPad('side');useDefaultProfile=true">使用預設剖面</button>
+        </div>
+      </div>
+    </div>
+    <div id="skErr"></div>
+    <div class="sk-actions">
+      <button class="cancel" onclick="closeSketch()">取消</button>
+      <button class="ok" onclick="confirmSketch()">✔ 產生 3D 模型</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ===================== 狀態 =====================
 const P = {
   shape:'ellipse', L:1700, W:850, H:550, t:15, b:40, r:150,
   dH:0, egg:0, taper:100,           // 不對稱參數：靠背增高 / 蛋形% / 底部收縮%
-  drain:'center', color:'#f5f5f0', water:false
+  drain:'center', color:'#f5f5f0', water:false,
+  customPts:null,                   // 手繪俯視輪廓（normalized 至 ±0.5 bbox，96 點）
+  customProfile:null                // 手繪側牆剖面 k(v)，25 個取樣值，k[24]=1
 };
 
 // ===================== Three.js 場景 =====================
@@ -223,8 +276,11 @@ function resample(pts, N){
   return out;
 }
 
-// 最終平面輪廓：套用蛋形係數（前端 +x 變窄、後端 -x 變寬）
+// 最終平面輪廓：套用蛋形係數（前端 +x 變窄、後端 -x 變寬）；手繪形狀直接縮放
 function outlinePts(shape, L, W, r, eggPct, N){
+  if(shape === 'custom' && P.customPts){
+    return P.customPts.map(p=>[p[0]*L, p[1]*W]);
+  }
   const e = eggPct/100;
   return resample(rawOutline(shape,L,W,r), N||96).map(p=>{
     const xn = p[0]/(L/2);
@@ -247,6 +303,18 @@ function shoelace(pts){
 // 二次貝茲：底部收縮 → 中段外鼓 → 缸口
 function bez(k0, c, v){ const u=1-v; return u*u*k0 + 2*u*v*c + v*v*1; }
 
+// 牆壁剖面：手繪剖面優先，否則用貝茲曲線
+function wallK(v, k0, c){
+  if(P.customProfile && P.shape === 'custom'){
+    const arr = P.customProfile, t = Math.max(0, Math.min(1, v)) * (arr.length - 1);
+    const i = Math.floor(t), f = t - i;
+    return arr[i] * (1 - f) + arr[Math.min(i + 1, arr.length - 1)] * f;
+  }
+  return bez(k0, c, v);
+}
+// 缸底相對缸口的比例
+function baseK(){ return (P.customProfile && P.shape === 'custom') ? P.customProfile[0] : P.taper/100; }
+
 // ===================== 曲面放樣建模 =====================
 let tubGroup = null;
 const N_SEG = 96, M_RING = 16;
@@ -259,7 +327,7 @@ function innerDims(){
 function loftGeometry(pts, L, z0, k0, bulge, H, dH){
   const pos=[], idx=[];
   for(let m=0;m<=M_RING;m++){
-    const v=m/M_RING, k=bez(k0, 1+bulge, v);
+    const v=m/M_RING, k=wallK(v, k0, 1+bulge);
     for(let i=0;i<N_SEG;i++){
       const [x,y]=pts[i];
       const zTop=rimH(x, L, H, dH);
@@ -311,7 +379,7 @@ function capGeometry(pts, k, z){
 }
 
 function drainXY(){
-  const inn=innerDims(), s=P.taper/100;
+  const inn=innerDims(), s=baseK();
   const reach = inn.L/2*s - 130;
   if(P.drain==='back')  return {x:-reach, y:0};
   if(P.drain==='front') return {x: reach, y:0};
@@ -326,7 +394,7 @@ function buildTub(){
   document.getElementById('warn').style.display = valid ? 'none' : 'block';
   if(!valid){ scene.add(tubGroup); return; }
 
-  const s = P.taper/100;
+  const s = baseK();
   const outerPts = outlinePts(P.shape, P.L, P.W, P.r, P.egg, N_SEG);
   const innerPts = outlinePts(P.shape, inn.L, inn.W, inn.r, P.egg, N_SEG);
   const mat = new THREE.MeshStandardMaterial({ color:P.color, roughness:0.22, metalness:0.05, side:THREE.DoubleSide });
@@ -349,7 +417,7 @@ function buildTub(){
   // 水位模擬（藍色半透明 = 水）
   if(P.water){
     const wd = inn.D*0.72, wl = P.b + wd;
-    const vw = wd/inn.D, kw = bez(s, 1.03, vw)*0.97;
+    const vw = wd/inn.D, kw = wallK(vw, s, 1.03)*0.97;
     const shape = new THREE.Shape();
     innerPts.forEach((p,i)=>{ i===0 ? shape.moveTo(p[0]*kw, p[1]*kw) : shape.lineTo(p[0]*kw, p[1]*kw); });
     shape.closePath();
@@ -369,7 +437,11 @@ function buildTub(){
 
 // ===================== 規格計算 =====================
 function computeSpec(){
-  const inn = innerDims(), s = P.taper/100, taperF = (1+s+s*s)/3;
+  const inn = innerDims(), s = P.taper/100;
+  // 數值積分：截面積隨高度以 k(v)^2 縮放
+  let taperF = 0;
+  for(let i=0;i<=32;i++){ const k = wallK(i/32, s, 1.05); taperF += k*k; }
+  taperF /= 33;
   const Ai = shoelace(outlinePts(P.shape, inn.L, inn.W, inn.r, P.egg, N_SEG));
   const Ao = shoelace(outlinePts(P.shape, P.L, P.W, P.r, P.egg, N_SEG));
   const fullVol = Ai*inn.D*taperF/1e6;
@@ -383,11 +455,12 @@ function computeSpec(){
 function updateSpec(){
   const s = computeSpec();
   const rows = [
+    ['缸口造型', P.shape==='custom' ? '✏️ 手繪自訂' : {rect:'圓角矩形',stadium:'圓端形',ellipse:'橢圓形'}[P.shape]],
     ['外部尺寸 (長×寬)', `${P.L} × ${P.W} mm`],
     ['缸緣高度 前端 / 後端', `${P.H} / ${P.H+P.dH} mm`],
     ['內部尺寸 (長×寬)', `${s.inn.L} × ${s.inn.W} mm`],
     ['內部深度 (前端)', `${s.inn.D} mm`],
-    ['底部尺寸 (收縮後)', `${Math.round(P.L*P.taper/100)} × ${Math.round(P.W*P.taper/100)} mm`],
+    ['底部尺寸 (收縮後)', `${Math.round(P.L*baseK())} × ${Math.round(P.W*baseK())} mm${(P.customProfile && P.shape==='custom') ? '（手繪剖面）' : ''}`],
     ['滿水容量 (估)', `${s.fullVol.toFixed(0)} L`],
     ['建議使用水量', `${s.useVol.toFixed(0)} L`],
     ['估計缸體重量 (壓克力)', `${s.weight.toFixed(1)} kg`],
@@ -410,7 +483,7 @@ const E = {
 function endProfile(sign, L, H, dH, s, bulge){
   const pts=[];
   for(let m=0;m<=12;m++){
-    const v=m/12, k=bez(s, 1+bulge, v);
+    const v=m/12, k=wallK(v, s, 1+bulge);
     const x=sign*(L/2)*k;
     pts.push([x, v*rimH(sign*L/2, L, H, dH)]);
   }
@@ -418,7 +491,7 @@ function endProfile(sign, L, H, dH, s, bulge){
 }
 
 function exportDXF(){
-  const inn = innerDims(), spec = computeSpec(), s = P.taper/100;
+  const inn = innerDims(), spec = computeSpec(), s = baseK();
   const HB = P.H + P.dH;
   const gap = 350;
   const outerPts = outlinePts(P.shape, P.L, P.W, P.r, P.egg, 96);
@@ -429,7 +502,7 @@ function exportDXF(){
   const topY = P.W/2 + gap;
   E.text(-P.L/2, topY + 270, 60, 'CUSTOM FREESTANDING BATHTUB - PRODUCTION DRAWING', 'TITLE');
   E.text(-P.L/2, topY + 180, 35, `DATE: ${new Date().toISOString().slice(0,10)}   UNIT: mm   SHAPE: ${P.shape.toUpperCase()}   CUSTOMER: ${document.getElementById('custName').value || '-'}`, 'TITLE');
-  E.text(-P.L/2, topY + 110, 35, `L=${P.L}  W=${P.W}  RIM H FRONT=${P.H} / BACK=${HB}  WALL=${P.t}  BOTTOM=${P.b}  EGG=${P.egg}%  BASE TAPER=${P.taper}%`, 'TITLE');
+  E.text(-P.L/2, topY + 110, 35, `L=${P.L}  W=${P.W}  RIM H FRONT=${P.H} / BACK=${HB}  WALL=${P.t}  BOTTOM=${P.b}  EGG=${P.egg}%  BASE=${Math.round(s*100)}%${P.customPts?'  PLAN=SKETCHED':''}${P.customProfile?'  PROFILE=SKETCHED':''}`, 'TITLE');
   E.text(-P.L/2, topY + 40, 35, `CAPACITY=${spec.fullVol.toFixed(0)}L  NOTE: ${document.getElementById('custNote').value || '-'}`, 'TITLE');
 
   // ---------- 俯視圖 TOP VIEW ----------
@@ -477,8 +550,10 @@ function exportJSON(){
     客戶姓名: document.getElementById('custName').value || '',
     備註: document.getElementById('custNote').value || '',
     設計參數: {
-      造型: {rect:'圓角矩形', stadium:'圓端形', ellipse:'橢圓形'}[P.shape],
+      造型: {rect:'圓角矩形', stadium:'圓端形', ellipse:'橢圓形', custom:'手繪自訂'}[P.shape],
       shape_code: P.shape,
+      手繪俯視輪廓_normalized: P.customPts ? P.customPts.map(p=>[+p[0].toFixed(4), +p[1].toFixed(4)]) : null,
+      手繪側牆剖面_k: P.customProfile ? P.customProfile.map(k=>+k.toFixed(4)) : null,
       外部長度_mm: P.L, 外部寬度_mm: P.W,
       缸緣高度_前端_mm: P.H, 缸緣高度_後端_mm: P.H+P.dH, 靠背增高_mm: P.dH,
       蛋形係數_pct: P.egg, 底部收縮_pct: P.taper,
@@ -525,14 +600,14 @@ function syncUI(){
     document.getElementById(nid).value = P[key];
   });
   document.querySelectorAll('.shape-btns button').forEach(b=>b.classList.toggle('active', b.dataset.shape===P.shape));
-  document.getElementById('radiusRow').style.display = (P.shape==='rect') ? 'flex' : 'none';
+  updateRowVis();
 }
 
 function setShape(s, btn){
   P.shape = s;
   document.querySelectorAll('.shape-btns button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  document.getElementById('radiusRow').style.display = (s==='rect') ? 'flex' : 'none';
+  updateRowVis();
   buildTub();
 }
 function setDrain(d, btn){
@@ -548,6 +623,270 @@ function applyPhotoPreset(){
   syncUI();
   document.querySelectorAll('.drain-btns button').forEach(b=>b.classList.toggle('active', b.dataset.drain===P.drain));
   buildTub();
+}
+
+// ===================== 手繪模式 =====================
+let useDefaultProfile = true;
+let uploadedContour = null;   // 由照片辨識出的輪廓（畫布座標）
+
+function makePad(id, drawGuides){
+  const cv = document.getElementById(id), ctx = cv.getContext('2d');
+  const state = { pts: [], drawing: false };
+  function redraw(){
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    drawGuides(ctx, cv);
+    if(state.pts.length > 1){
+      ctx.strokeStyle = '#1a2b3c'; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath();
+      state.pts.forEach((p, i)=> i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]));
+      ctx.stroke();
+    }
+  }
+  function pos(e){
+    const r = cv.getBoundingClientRect();
+    return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height];
+  }
+  cv.addEventListener('pointerdown', e=>{ state.drawing = true; state.pts.push(pos(e)); cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', e=>{ if(state.drawing){ state.pts.push(pos(e)); redraw(); } });
+  cv.addEventListener('pointerup', ()=> state.drawing = false);
+  state.redraw = redraw;
+  redraw();
+  return state;
+}
+
+const padTop = makePad('padTop', (ctx, cv)=>{
+  ctx.strokeStyle = '#dde3ea'; ctx.setLineDash([5,5]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cv.width/2, 10); ctx.lineTo(cv.width/2, cv.height-10);
+  ctx.moveTo(10, cv.height/2); ctx.lineTo(cv.width-10, cv.height/2); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#bbb'; ctx.font = '11px sans-serif';
+  ctx.fillText('畫一個封閉的缸口形狀', 12, 18);
+});
+const padSide = makePad('padSide', (ctx, cv)=>{
+  ctx.strokeStyle = '#e67e22'; ctx.setLineDash([6,4]); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(28, 10); ctx.lineTo(28, cv.height-10); ctx.stroke();  // 中心線
+  ctx.setLineDash([]);
+  ctx.strokeStyle = '#dde3ea';
+  ctx.beginPath(); ctx.moveTo(10, cv.height-30); ctx.lineTo(cv.width-10, cv.height-30);  // 地面
+  ctx.moveTo(10, 30); ctx.lineTo(cv.width-10, 30); ctx.stroke();                          // 缸緣
+  ctx.fillStyle = '#bbb'; ctx.font = '11px sans-serif';
+  ctx.fillText('中心線', 6, cv.height/2 - 40);
+  ctx.fillText('缸緣（上）', cv.width-70, 24);
+  ctx.fillText('缸底（下）', cv.width-70, cv.height-16);
+});
+
+function clearPad(which){
+  if(which === 'top'){ padTop.pts = []; uploadedContour = null; padTop.redraw(); }
+  else { padSide.pts = []; padSide.redraw(); }
+}
+function skErr(msg){
+  const el = document.getElementById('skErr');
+  el.textContent = msg; el.style.display = msg ? 'block' : 'none';
+}
+function openSketch(){ skErr(''); document.getElementById('sketchModal').classList.add('open'); }
+function closeSketch(){ document.getElementById('sketchModal').classList.remove('open'); }
+
+// ---------- 幾何處理 ----------
+function rdp(pts, eps){
+  if(pts.length < 3) return pts.slice();
+  let maxD = 0, idx = 0;
+  const [x1,y1] = pts[0], [x2,y2] = pts[pts.length-1];
+  const dx = x2-x1, dy = y2-y1, len = Math.hypot(dx,dy) || 1;
+  for(let i=1;i<pts.length-1;i++){
+    const d = Math.abs(dy*pts[i][0] - dx*pts[i][1] + x2*y1 - y2*x1) / len;
+    if(d > maxD){ maxD = d; idx = i; }
+  }
+  if(maxD <= eps) return [pts[0], pts[pts.length-1]];
+  return rdp(pts.slice(0, idx+1), eps).slice(0,-1).concat(rdp(pts.slice(idx), eps));
+}
+function chaikinClosed(pts){
+  const out = [];
+  for(let i=0;i<pts.length;i++){
+    const a = pts[i], b = pts[(i+1)%pts.length];
+    out.push([a[0]*0.75+b[0]*0.25, a[1]*0.75+b[1]*0.25]);
+    out.push([a[0]*0.25+b[0]*0.75, a[1]*0.25+b[1]*0.75]);
+  }
+  return out;
+}
+function processTopSketch(raw){
+  if(raw.length < 12) return null;
+  let pts = rdp(raw, 2.5);
+  if(pts.length < 4) return null;
+  pts = chaikinClosed(chaikinClosed(pts));
+  pts = resample(pts, N_SEG);
+  // normalize：bbox 置中並縮放至 ±0.5
+  let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9;
+  pts.forEach(p=>{ minX=Math.min(minX,p[0]); maxX=Math.max(maxX,p[0]); minY=Math.min(minY,p[1]); maxY=Math.max(maxY,p[1]); });
+  const cx=(minX+maxX)/2, cy=(minY+maxY)/2, sx=(maxX-minX)||1, sy=(maxY-minY)||1;
+  pts = pts.map(p=>[(p[0]-cx)/sx, -(p[1]-cy)/sy]);   // 翻轉 y（畫布 y 向下）
+  if(shoelaceSigned(pts) < 0) pts.reverse();          // 統一逆時針
+  return pts;
+}
+function shoelaceSigned(pts){
+  let a=0;
+  for(let i=0;i<pts.length;i++){ const p=pts[i], q=pts[(i+1)%pts.length]; a += p[0]*q[1]-q[0]*p[1]; }
+  return a/2;
+}
+function processSideSketch(raw){
+  if(raw.length < 10) return null;
+  const AXIS_X = 28;  // 畫布中心線位置
+  let pts = raw.slice();
+  if(pts[0][1] < pts[pts.length-1][1]) pts.reverse();  // 由下往上
+  const yBot = pts[0][1], yTop = pts[pts.length-1][1];
+  if(yBot - yTop < 40) return null;                     // 高度太小
+  // 只保留 v 遞增的點（去除回鉤）
+  const samples = [];
+  let lastV = -1;
+  pts.forEach(p=>{
+    const v = (yBot - p[1]) / (yBot - yTop);
+    if(v > lastV){ samples.push([v, Math.max(4, p[0] - AXIS_X)]); lastV = v; }
+  });
+  if(samples.length < 5) return null;
+  // 以頂端寬度正規化 → k(1)=1，重取樣 25 級
+  const kTop = samples[samples.length-1][1];
+  const prof = [];
+  for(let m=0;m<=24;m++){
+    const v = m/24;
+    let j=0;
+    while(j < samples.length-1 && samples[j+1][0] < v) j++;
+    const a = samples[j], b = samples[Math.min(j+1, samples.length-1)];
+    const f = (b[0]-a[0]) > 1e-6 ? (v-a[0])/(b[0]-a[0]) : 0;
+    prof.push(Math.max(0.08, Math.min(1.4, (a[1]+(b[1]-a[1])*Math.max(0,Math.min(1,f))) / kTop)));
+  }
+  prof[24] = 1;
+  return prof;
+}
+
+// ---------- 照片輪廓辨識 ----------
+document.getElementById('uplTop').addEventListener('change', e=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const img = new Image();
+  img.onload = ()=>{
+    try {
+      const contour = traceImage(img);
+      if(!contour){ skErr('⚠ 偵測不到封閉形狀。請用深色筆在白紙上畫封閉輪廓，光線均勻、對比清楚。'); return; }
+      skErr('');
+      // 縮放到畫布並顯示
+      const cv = document.getElementById('padTop');
+      let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9;
+      contour.forEach(p=>{ minX=Math.min(minX,p[0]); maxX=Math.max(maxX,p[0]); minY=Math.min(minY,p[1]); maxY=Math.max(maxY,p[1]); });
+      const sc = Math.min((cv.width-40)/(maxX-minX), (cv.height-40)/(maxY-minY));
+      padTop.pts = contour.map(p=>[(p[0]-minX)*sc+20, (p[1]-minY)*sc+20]);
+      uploadedContour = padTop.pts;
+      padTop.redraw();
+    } catch(err){ skErr('⚠ 圖片處理失敗：' + err.message); }
+  };
+  img.src = URL.createObjectURL(file);
+  e.target.value = '';
+});
+
+function traceImage(img){
+  const MAXW = 400;
+  const sc = Math.min(1, MAXW / img.width);
+  const w = Math.round(img.width * sc), h = Math.round(img.height * sc);
+  const oc = document.createElement('canvas'); oc.width = w; oc.height = h;
+  const ctx = oc.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  // 灰階 + Otsu 閾值
+  const gray = new Uint8Array(w*h), hist = new Array(256).fill(0);
+  for(let i=0;i<w*h;i++){
+    const g = Math.round(0.299*data[i*4] + 0.587*data[i*4+1] + 0.114*data[i*4+2]);
+    gray[i] = g; hist[g]++;
+  }
+  let sum=0, total=w*h;
+  for(let i=0;i<256;i++) sum += i*hist[i];
+  let sumB=0, wB=0, maxVar=0, thresh=128;
+  for(let i=0;i<256;i++){
+    wB += hist[i]; if(!wB) continue;
+    const wF = total - wB; if(!wF) break;
+    sumB += i*hist[i];
+    const mB = sumB/wB, mF = (sum-sumB)/wF, v = wB*wF*(mB-mF)*(mB-mF);
+    if(v > maxVar){ maxVar = v; thresh = i; }
+  }
+  const ink = new Uint8Array(w*h);
+  for(let i=0;i<w*h;i++) ink[i] = gray[i] < thresh ? 1 : 0;
+  // 從邊界 flood 背景 → 未被淹到的 = 形狀內部（含筆跡與被包圍區域）
+  const visited = new Uint8Array(w*h), queue = [];
+  for(let x=0;x<w;x++){ queue.push(x, (h-1)*w+x); }
+  for(let y=0;y<h;y++){ queue.push(y*w, y*w+w-1); }
+  queue.forEach(i=>{ if(!ink[i]) visited[i] = 1; });
+  let qi = 0;
+  const q2 = queue.filter(i=>visited[i]);
+  while(qi < q2.length){
+    const i = q2[qi++], x = i%w, y = (i/w)|0;
+    [[x-1,y],[x+1,y],[x,y-1],[x,y+1]].forEach(([nx,ny])=>{
+      if(nx>=0 && nx<w && ny>=0 && ny<h){
+        const ni = ny*w+nx;
+        if(!visited[ni] && !ink[ni]){ visited[ni] = 1; q2.push(ni); }
+      }
+    });
+  }
+  const solid = new Uint8Array(w*h);
+  for(let i=0;i<w*h;i++) solid[i] = (ink[i] || !visited[i]) ? 1 : 0;
+  // 取最大連通塊
+  const label = new Int32Array(w*h).fill(-1);
+  let best = -1, bestSize = 0, nl = 0;
+  for(let i0=0;i0<w*h;i0++){
+    if(solid[i0] && label[i0] < 0){
+      const bfs = [i0]; label[i0] = nl;
+      let bi = 0;
+      while(bi < bfs.length){
+        const i = bfs[bi++], x = i%w, y = (i/w)|0;
+        [[x-1,y],[x+1,y],[x,y-1],[x,y+1]].forEach(([nx,ny])=>{
+          if(nx>=0 && nx<w && ny>=0 && ny<h){
+            const ni = ny*w+nx;
+            if(solid[ni] && label[ni] < 0){ label[ni] = nl; bfs.push(ni); }
+          }
+        });
+      }
+      if(bfs.length > bestSize){ bestSize = bfs.length; best = nl; }
+      nl++;
+    }
+  }
+  if(bestSize < total*0.005) return null;   // 形狀太小
+  const mask = i => label[i] === best;
+  // Moore 邊界追蹤
+  let start = -1;
+  for(let i=0;i<w*h;i++) if(mask(i)){ start = i; break; }
+  const dirs = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+  const contour = [];
+  let cx = start%w, cy = (start/w)|0, dir = 6;
+  for(let step=0; step < w*h; step++){
+    contour.push([cx, cy]);
+    let found = false;
+    for(let k=0;k<8;k++){
+      const d = (dir + 6 + k) % 8;
+      const nx = cx + dirs[d][0], ny = cy + dirs[d][1];
+      if(nx>=0 && nx<w && ny>=0 && ny<h && mask(ny*w+nx)){
+        cx = nx; cy = ny; dir = d; found = true; break;
+      }
+    }
+    if(!found) break;
+    if(cx === start%w && cy === ((start/w)|0) && contour.length > 10) break;
+  }
+  return contour.length > 30 ? contour : null;
+}
+
+// ---------- 確認 ----------
+function confirmSketch(){
+  const raw = uploadedContour || padTop.pts;
+  const norm = processTopSketch(raw);
+  if(!norm){ skErr('⚠ 請先畫出（或上傳）一個封閉的缸口形狀，線條要夠長。'); return; }
+  P.customPts = norm;
+  P.customProfile = processSideSketch(padSide.pts);   // 沒畫 → null → 用參數剖面
+  P.shape = 'custom';
+  document.querySelectorAll('.shape-btns button').forEach(b=>b.classList.toggle('active', b.dataset.shape==='custom'));
+  updateRowVis();
+  closeSketch();
+  buildTub();
+}
+
+function updateRowVis(){
+  document.getElementById('radiusRow').style.display = (P.shape==='rect') ? 'flex' : 'none';
+  document.getElementById('rE').closest('.row').style.display = (P.shape==='custom') ? 'none' : 'flex';
+  document.getElementById('rS').closest('.row').style.display = (P.customProfile && P.shape==='custom') ? 'none' : 'flex';
 }
 
 document.querySelectorAll('.sw').forEach(sw=>{
