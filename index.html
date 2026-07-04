@@ -127,6 +127,11 @@
     <div class="group">
       <h3>③ 不對稱造型參數</h3>
       <div class="row"><label>靠背增高(後端)</label><input type="range" id="rDH" min="0" max="250" step="10" value="0"><div class="val"><input id="nDH" value="0"><span>mm</span></div></div>
+      <div class="rim-label">增高曲線</div>
+      <div class="drain-btns rise-btns" style="margin-bottom:10px">
+        <button data-rise="arc" class="active" onclick="setRise('arc',this)">弧形</button>
+        <button data-rise="line" onclick="setRise('line',this)">直線</button>
+      </div>
       <div class="row"><label>蛋形係數</label><input type="range" id="rE" min="0" max="30" step="1" value="0"><div class="val"><input id="nE" value="0"><span>%</span></div></div>
       <div class="row"><label>底部收縮</label><input type="range" id="rS" min="60" max="100" step="1" value="100"><div class="val"><input id="nS" value="100"><span>%</span></div></div>
       <div class="tip">靠背增高＝後端缸緣比前端高多少（缸緣呈斜面）｜蛋形係數＝前端變窄、後端變寬｜底部收縮＝缸底佔缸口的比例，數值越小側壁越內收</div>
@@ -216,6 +221,7 @@ const P = {
   shape:'ellipse', L:1700, W:850, H:550, t:15, b:40, r:150,
   dH:0, egg:0, taper:100,           // 不對稱參數：靠背增高 / 蛋形% / 底部收縮%
   drain:'center', color:'#f5f5f0', water:false, rim:'round',   // 缸緣造型：flat 平面 / round 圓弧 / bevel 斜角
+  rise:'arc',                                                   // 靠背增高曲線：arc 弧形 / line 直線
   customPts:null,                   // 手繪俯視輪廓（normalized 至 ±0.5 bbox，96 點）
   customProfile:null                // 手繪側牆剖面 k(v)，25 個取樣值，k[24]=1
 };
@@ -247,6 +253,9 @@ const I18N = {
   '⚠ 參數不合理：內部空間不足，請調整尺寸': ['⚠ 参数不合理：内部空间不足，请调整尺寸', '⚠ Invalid parameters: interior space too small, please adjust'],
   '③ 不對稱造型參數': ['③ 不对称造型参数', '③ Asymmetry Parameters'],
   '靠背增高(後端)': ['靠背增高(后端)', 'Backrest rise (rear)'],
+  '增高曲線': ['增高曲线', 'Rise curve'],
+  '弧形': ['弧形', 'Curved'],
+  '直線': ['直线', 'Straight'],
   '蛋形係數': ['蛋形系数', 'Egg factor'],
   '底部收縮': ['底部收缩', 'Base taper'],
   '靠背增高＝後端缸緣比前端高多少（缸緣呈斜面）｜蛋形係數＝前端變窄、後端變寬｜底部收縮＝缸底佔缸口的比例，數值越小側壁越內收': ['靠背增高＝后端缸缘比前端高多少（缸缘呈斜面）｜蛋形系数＝前端变窄、后端变宽｜底部收缩＝缸底占缸口的比例，数值越小侧壁越内收', 'Backrest rise = how much higher the rear rim is (sloped rim) | Egg factor = narrower front, wider rear | Base taper = footprint vs rim opening; smaller = more inward-curving walls'],
@@ -440,10 +449,13 @@ function outlinePts(shape, L, W, r, eggPct, N){
   });
 }
 
-// 缸緣高度：沿長度方向線性變化（後端 -x 較高）
+// 缸緣高度：沿長度方向變化（後端 -x 較高）
+// 弧形＝smoothstep 平滑曲線：前端平順、中段以弧線爬升、靠背處收平；直線＝線性增高
 function rimH(x, L, H, dH){
   const xn = Math.max(-1, Math.min(1, x/(L/2)));
-  return H + dH*(1-xn)/2;
+  const u = (1 - xn)/2;                                  // 0=前端, 1=後端
+  const f = (P.rise === 'line') ? u : u*u*(3 - 2*u);
+  return H + dH*f;
 }
 
 function shoelace(pts){
@@ -679,7 +691,7 @@ function exportDXF(){
   // ---------- 標題 ----------
   const topY = P.W/2 + gap;
   E.text(-P.L/2, topY + 270, 60, 'CUSTOM FREESTANDING BATHTUB - PRODUCTION DRAWING', 'TITLE');
-  E.text(-P.L/2, topY + 180, 35, `DATE: ${new Date().toISOString().slice(0,10)}   UNIT: mm   SHAPE: ${P.shape.toUpperCase()}   RIM: ${P.rim.toUpperCase()}   CUSTOMER: ${document.getElementById('custName').value || '-'}`, 'TITLE');
+  E.text(-P.L/2, topY + 180, 35, `DATE: ${new Date().toISOString().slice(0,10)}   UNIT: mm   SHAPE: ${P.shape.toUpperCase()}   RIM: ${P.rim.toUpperCase()}   RISE: ${P.rise.toUpperCase()}   CUSTOMER: ${document.getElementById('custName').value || '-'}`, 'TITLE');
   E.text(-P.L/2, topY + 110, 35, `L=${P.L}  W=${P.W}  RIM H FRONT=${P.H} / BACK=${HB}  WALL=${P.t}  BOTTOM=${P.b}  EGG=${P.egg}%  BASE=${Math.round(s*100)}%${P.customPts?'  PLAN=SKETCHED':''}${P.customProfile?'  PROFILE=SKETCHED':''}`, 'TITLE');
   E.text(-P.L/2, topY + 40, 35, `CAPACITY=${spec.fullVol.toFixed(0)}L  NOTE: ${document.getElementById('custNote').value || '-'}`, 'TITLE');
 
@@ -700,7 +712,9 @@ function exportDXF(){
   E.line(-P.L/2*s, fy, P.L/2*s, fy, 'OUTLINE');                       // 底邊
   E.path(endProfile(1, P.L, P.H, P.dH, s, 0.07).map(p=>[p[0], fy+p[1]]), 0, 0, 'OUTLINE');   // 前端側壁曲線
   E.path(endProfile(-1, P.L, P.H, P.dH, s, 0.07).map(p=>[p[0], fy+p[1]]), 0, 0, 'OUTLINE');  // 後端側壁曲線
-  E.line(-P.L/2, fy+HB, P.L/2, fy+P.H, 'OUTLINE');                    // 缸緣斜線（後高前低）
+  const rimPts = [];                                                  // 缸緣線（後高前低，依弧形/直線取樣）
+  for(let m=0;m<=24;m++){ const x = -P.L/2 + P.L*m/24; rimPts.push([x, fy + rimH(x, P.L, P.H, P.dH)]); }
+  E.path(rimPts, 0, 0, 'OUTLINE');
   E.line(-inn.L/2, fy+P.b, inn.L/2, fy+P.b, 'HIDDEN');                // 缸內底面
   E.text(-P.L/2, fy+HB+60, 40, 'FRONT VIEW (SLOPED RIM)', 'TEXT');
   E.text(-P.L/2, fy-90, 32, `RIM H: BACK=${HB} FRONT=${P.H}  BOTTOM=${P.b}  INNER DEPTH=${inn.D}`, 'DIM');
@@ -737,6 +751,7 @@ function exportJSON(){
       蛋形係數_pct: P.egg, 底部收縮_pct: P.taper,
       缸壁厚度_mm: P.t, 缸底厚度_mm: P.b, 圓角半徑_mm: P.r,
       缸緣造型: {flat:'平面', round:'圓弧', bevel:'斜角'}[P.rim], rim_code: P.rim,
+      靠背增高曲線: P.rise === 'arc' ? '弧形' : '直線', rise_code: P.rise,
       排水孔位置: P.drain, 外觀顏色: P.color
     },
     計算規格: {
@@ -798,6 +813,12 @@ function setDrain(d, btn){
 function setRim(r, btn){
   P.rim = r;
   document.querySelectorAll('.rim-btns button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  buildTub();
+}
+function setRise(r, btn){
+  P.rise = r;
+  document.querySelectorAll('.rise-btns button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   buildTub();
 }
