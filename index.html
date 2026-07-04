@@ -11,6 +11,10 @@
   header { background:#1a2b3c; color:#fff; padding:10px 20px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
   header h1 { font-size:17px; font-weight:600; }
   header .sub { font-size:12px; color:#9db4cc; }
+  .lang-sw { display:flex; gap:4px; margin-right:14px; }
+  .lang-sw button { padding:4px 10px; font-size:12px; border:1px solid #46617c; background:transparent; color:#9db4cc; border-radius:5px; cursor:pointer; }
+  .lang-sw button.active { background:#e67e22; border-color:#e67e22; color:#fff; font-weight:600; }
+  .rim-label { font-size:12.5px; color:#444; margin:10px 0 6px; }
   .btns { display:flex; gap:8px; }
   .btn { border:none; border-radius:6px; padding:8px 14px; font-size:13px; cursor:pointer; font-weight:600; }
   .btn-dxf { background:#e67e22; color:#fff; }
@@ -67,9 +71,16 @@
 </head>
 <body>
 <header>
-  <div>
-    <h1>🛁 客製化浴缸互動設計系統</h1>
-    <div class="sub">客戶自主設計 → 參數化 3D 預覽 → 一鍵輸出設計師可修改之 CAD (DXF) 圖檔 → 模具製造</div>
+  <div style="display:flex;align-items:center">
+    <div class="lang-sw">
+      <button data-lang="zhT" class="active" onclick="setLang('zhT',this)">繁中</button>
+      <button data-lang="zhS" onclick="setLang('zhS',this)">简中</button>
+      <button data-lang="en" onclick="setLang('en',this)">EN</button>
+    </div>
+    <div>
+      <h1>🛁 客製化浴缸互動設計系統</h1>
+      <div class="sub">客戶自主設計 → 參數化 3D 預覽 → 一鍵輸出設計師可修改之 CAD (DXF) 圖檔 → 模具製造</div>
+    </div>
   </div>
   <div class="btns">
     <button class="btn btn-dxf" onclick="exportDXF()">⬇ 下載 CAD 圖檔 (DXF)</button>
@@ -85,6 +96,12 @@
         <button data-shape="stadium" onclick="setShape('stadium',this)">圓端形</button>
         <button data-shape="ellipse" class="active" onclick="setShape('ellipse',this)">橢圓形</button>
         <button data-shape="custom" onclick="openSketch()">✏️ 手繪</button>
+      </div>
+      <div class="rim-label">缸緣造型</div>
+      <div class="drain-btns rim-btns">
+        <button data-rim="flat" onclick="setRim('flat',this)">平面</button>
+        <button data-rim="round" class="active" onclick="setRim('round',this)">圓弧</button>
+        <button data-rim="bevel" onclick="setRim('bevel',this)">斜角</button>
       </div>
       <button class="preset" onclick="applyPhotoPreset()">★ 套用照片款：不對稱蛋形缸</button>
     </div>
@@ -136,7 +153,7 @@
     </div>
     <div class="group">
       <h3>製程流程</h3>
-      <div class="flow">
+      <div class="flow" id="flowBox">
         <b>客戶端</b>：於本頁面依想像調整造型與參數，3D 即時預覽<br>
         <b>↓ 一鍵輸出</b><br>
         <b>設計端</b>：DXF 三視圖（AutoCAD 可直接開啟修改）＋ JSON 規格表<br>
@@ -159,7 +176,7 @@
     <div class="sk-flex">
       <div class="sk-col">
         <h4>① 俯視缸口形狀（必畫）</h4>
-        <div class="desc">從正上方看的缸口輪廓。畫一個<b>封閉</b>的形狀（頭尾會自動接起來）。也可以把紙上手稿拍照上傳（深色筆、白紙、光線均勻）。</div>
+        <div class="desc" id="skDescTop">從正上方看的缸口輪廓。畫一個<b>封閉</b>的形狀（頭尾會自動接起來）。也可以把紙上手稿拍照上傳（深色筆、白紙、光線均勻）。</div>
         <canvas id="padTop" class="pad" width="360" height="260"></canvas>
         <div class="sk-tools">
           <button onclick="clearPad('top')">清除重畫</button>
@@ -168,7 +185,7 @@
       </div>
       <div class="sk-col">
         <h4>② 側面牆壁剖面（選畫）</h4>
-        <div class="desc">左邊虛線＝浴缸中心線。<b>由下往上</b>畫出單邊外牆曲線（例：底部內收、中段外鼓）。不畫則由「底部收縮」參數控制。</div>
+        <div class="desc" id="skDescSide">左邊虛線＝浴缸中心線。<b>由下往上</b>畫出單邊外牆曲線（例：底部內收、中段外鼓）。不畫則由「底部收縮」參數控制。</div>
         <canvas id="padSide" class="pad" width="300" height="260"></canvas>
         <div class="sk-tools">
           <button onclick="clearPad('side')">清除重畫</button>
@@ -189,10 +206,136 @@
 const P = {
   shape:'ellipse', L:1700, W:850, H:550, t:15, b:40, r:150,
   dH:0, egg:0, taper:100,           // 不對稱參數：靠背增高 / 蛋形% / 底部收縮%
-  drain:'center', color:'#f5f5f0', water:false,
+  drain:'center', color:'#f5f5f0', water:false, rim:'round',   // 缸緣造型：flat 平面 / round 圓弧 / bevel 斜角
   customPts:null,                   // 手繪俯視輪廓（normalized 至 ±0.5 bbox，96 點）
   customProfile:null                // 手繪側牆剖面 k(v)，25 個取樣值，k[24]=1
 };
+
+// ===================== 多語系 i18n（繁中 zhT ＝原文；[0]=简中 zhS, [1]=英文 en） =====================
+let LANG = 'zhT';
+const I18N = {
+  '🛁 客製化浴缸互動設計系統': ['🛁 客制化浴缸互动设计系统', '🛁 Custom Bathtub Interactive Designer'],
+  '客戶自主設計 → 參數化 3D 預覽 → 一鍵輸出設計師可修改之 CAD (DXF) 圖檔 → 模具製造': ['客户自主设计 → 参数化 3D 预览 → 一键输出设计师可修改的 CAD (DXF) 图档 → 模具制造', 'Customer self-design → Parametric 3D preview → One-click designer-editable CAD (DXF) export → Mould production'],
+  '⬇ 下載 CAD 圖檔 (DXF)': ['⬇ 下载 CAD 图档 (DXF)', '⬇ Download CAD (DXF)'],
+  '⬇ 下載規格表 (JSON)': ['⬇ 下载规格表 (JSON)', '⬇ Download Spec (JSON)'],
+  '① 浴缸造型（獨立式）': ['① 浴缸造型（独立式）', '① Tub Shape (Freestanding)'],
+  '圓角矩形': ['圆角矩形', 'Rounded Rect'],
+  '圓端形': ['圆端形', 'Rounded Ends'],
+  '橢圓形': ['椭圆形', 'Oval'],
+  '✏️ 手繪': ['✏️ 手绘', '✏️ Sketch'],
+  '缸緣造型': ['缸缘造型', 'Rim profile'],
+  '平面': ['平面', 'Flat'],
+  '圓弧': ['圆弧', 'Rounded'],
+  '斜角': ['斜角', 'Beveled'],
+  '★ 套用照片款：不對稱蛋形缸': ['★ 套用照片款：不对称蛋形缸', '★ Photo preset: asymmetric egg tub'],
+  '② 尺寸參數（mm）': ['② 尺寸参数（mm）', '② Dimensions (mm)'],
+  '外部長度': ['外部长度', 'Overall length'],
+  '外部寬度': ['外部宽度', 'Overall width'],
+  '缸緣高度(前端)': ['缸缘高度(前端)', 'Rim height (front)'],
+  '缸壁厚度': ['缸壁厚度', 'Wall thickness'],
+  '缸底厚度': ['缸底厚度', 'Base thickness'],
+  '圓角半徑': ['圆角半径', 'Corner radius'],
+  '⚠ 參數不合理：內部空間不足，請調整尺寸': ['⚠ 参数不合理：内部空间不足，请调整尺寸', '⚠ Invalid parameters: interior space too small, please adjust'],
+  '③ 不對稱造型參數': ['③ 不对称造型参数', '③ Asymmetry Parameters'],
+  '靠背增高(後端)': ['靠背增高(后端)', 'Backrest rise (rear)'],
+  '蛋形係數': ['蛋形系数', 'Egg factor'],
+  '底部收縮': ['底部收缩', 'Base taper'],
+  '靠背增高＝後端缸緣比前端高多少（缸緣呈斜面）｜蛋形係數＝前端變窄、後端變寬｜底部收縮＝缸底佔缸口的比例，數值越小側壁越內收': ['靠背增高＝后端缸缘比前端高多少（缸缘呈斜面）｜蛋形系数＝前端变窄、后端变宽｜底部收缩＝缸底占缸口的比例，数值越小侧壁越内收', 'Backrest rise = how much higher the rear rim is (sloped rim) | Egg factor = narrower front, wider rear | Base taper = footprint vs rim opening; smaller = more inward-curving walls'],
+  '④ 排水孔位置': ['④ 排水孔位置', '④ Drain Position'],
+  '中央': ['中央', 'Center'],
+  '靠背端': ['靠背端', 'Rear end'],
+  '前端': ['前端', 'Front end'],
+  '⑤ 外觀顏色': ['⑤ 外观颜色', '⑤ Colour'],
+  '顯示水位模擬（藍色半透明＝水）': ['显示水位模拟（蓝色半透明＝水）', 'Show water level (translucent blue = water)'],
+  '⑥ 訂單資訊（輸出至 CAD / 規格表）': ['⑥ 订单信息（输出至 CAD / 规格表）', '⑥ Order Info (exported to CAD / spec)'],
+  '⑦ 即時規格計算': ['⑦ 实时规格计算', '⑦ Live Specifications'],
+  '製程流程': ['制程流程', 'Production Flow'],
+  '拖曳＝360° 自由旋轉（含仰視）｜滾輪＝縮放': ['拖拽＝360° 自由旋转（含仰视）｜滚轮＝缩放', 'Drag = 360° free orbit (incl. bottom view) | Scroll = zoom'],
+  '✏️ 手繪你的浴缸形狀': ['✏️ 手绘你的浴缸形状', '✏️ Sketch Your Bathtub Shape'],
+  '畫出獨一無二的浴缸 — 系統會自動把手繪線條轉成流暢曲線並建成 3D 模型，之後仍可調整所有尺寸參數。': ['画出独一无二的浴缸 — 系统会自动把手绘线条转成流畅曲线并建成 3D 模型，之后仍可调整所有尺寸参数。', 'Draw a one-of-a-kind bathtub — sketch lines are auto-smoothed into clean curves and built into a 3D model. All dimension parameters remain adjustable afterwards.'],
+  '① 俯視缸口形狀（必畫）': ['① 俯视缸口形状（必画）', '① Top-View Rim Shape (required)'],
+  '② 側面牆壁剖面（選畫）': ['② 侧面墙壁剖面（选画）', '② Side Wall Profile (optional)'],
+  '清除重畫': ['清除重画', 'Clear'],
+  '📷 上傳手稿照片': ['📷 上传手稿照片', '📷 Upload sketch photo'],
+  '使用預設剖面': ['使用预设剖面', 'Use default profile'],
+  '取消': ['取消', 'Cancel'],
+  '✔ 產生 3D 模型': ['✔ 生成 3D 模型', '✔ Generate 3D Model'],
+  // 畫布導引文字
+  '畫一個封閉的缸口形狀': ['画一个封闭的缸口形状', 'Draw a closed rim outline'],
+  '中心線': ['中心线', 'Centerline'],
+  '缸緣（上）': ['缸缘（上）', 'Rim (top)'],
+  '缸底（下）': ['缸底（下）', 'Base (bottom)'],
+  // 規格表
+  '缸口造型': ['缸口造型', 'Rim shape'],
+  '外部尺寸 (長×寬)': ['外部尺寸 (长×宽)', 'Overall size (L×W)'],
+  '缸緣高度 前端 / 後端': ['缸缘高度 前端 / 后端', 'Rim height front / rear'],
+  '內部尺寸 (長×寬)': ['内部尺寸 (长×宽)', 'Interior size (L×W)'],
+  '內部深度 (前端)': ['内部深度 (前端)', 'Interior depth (front)'],
+  '底部尺寸 (收縮後)': ['底部尺寸 (收缩后)', 'Base footprint (tapered)'],
+  '滿水容量 (估)': ['满水容量 (估)', 'Full capacity (est.)'],
+  '建議使用水量 (八成滿)': ['建议使用水量 (八成满)', 'Recommended fill (80%)'],
+  '估計缸體重量 (壓克力)': ['估计缸体重量 (亚克力)', 'Est. shell weight (acrylic)'],
+  '排水孔位置': ['排水孔位置', 'Drain position'],
+  '✏️ 手繪自訂': ['✏️ 手绘自定义', '✏️ Custom sketch'],
+  '（手繪剖面）': ['（手绘剖面）', ' (sketched profile)'],
+  // 錯誤訊息
+  '⚠ 請先畫出（或上傳）一個封閉的缸口形狀，線條要夠長。': ['⚠ 请先画出（或上传）一个封闭的缸口形状，线条要够长。', '⚠ Please draw (or upload) a closed rim outline first — the line needs to be long enough.'],
+  '⚠ 偵測不到封閉形狀。請用深色筆在白紙上畫封閉輪廓，光線均勻、對比清楚。': ['⚠ 检测不到封闭形状。请用深色笔在白纸上画封闭轮廓，光线均匀、对比清楚。', '⚠ No closed shape detected. Use a dark pen on white paper, with even lighting and clear contrast.'],
+  '⚠ 圖片處理失敗：': ['⚠ 图片处理失败：', '⚠ Image processing failed: '],
+  // placeholder
+  '客戶姓名 / Customer Name': ['客户姓名 / Customer Name', 'Customer name'],
+  '備註 / Notes（例：需加裝溢水口）': ['备注 / Notes（例：需加装溢水口）', 'Notes (e.g. overflow drain required)']
+};
+// 含 HTML 標記的區塊：id → [繁中, 简中, 英文]
+const I18N_HTML = {
+  flowBox: [
+    '<b>客戶端</b>：於本頁面依想像調整造型與參數，3D 即時預覽<br><b>↓ 一鍵輸出</b><br><b>設計端</b>：DXF 三視圖（AutoCAD 可直接開啟修改）＋ JSON 規格表<br><b>↓ 設計師確認 / 微調</b><br><b>製造端</b>：依 CAD 圖進行模具開發與生產',
+    '<b>客户端</b>：于本页面按想象调整造型与参数，3D 实时预览<br><b>↓ 一键输出</b><br><b>设计端</b>：DXF 三视图（AutoCAD 可直接打开修改）＋ JSON 规格表<br><b>↓ 设计师确认 / 微调</b><br><b>制造端</b>：按 CAD 图进行模具开发与生产',
+    '<b>Customer</b>: adjust shape &amp; parameters here with live 3D preview<br><b>↓ One-click export</b><br><b>Designer</b>: DXF 3-view drawing (editable in AutoCAD) + JSON spec sheet<br><b>↓ Designer review / fine-tune</b><br><b>Factory</b>: mould development &amp; production from CAD'
+  ],
+  skDescTop: [
+    '從正上方看的缸口輪廓。畫一個<b>封閉</b>的形狀（頭尾會自動接起來）。也可以把紙上手稿拍照上傳（深色筆、白紙、光線均勻）。',
+    '从正上方看的缸口轮廓。画一个<b>封闭</b>的形状（头尾会自动接起来）。也可以把纸上手稿拍照上传（深色笔、白纸、光线均匀）。',
+    'The rim outline seen from directly above. Draw a <b>closed</b> shape (ends auto-connect). You can also photograph a paper sketch and upload it (dark pen, white paper, even lighting).'
+  ],
+  skDescSide: [
+    '左邊虛線＝浴缸中心線。<b>由下往上</b>畫出單邊外牆曲線（例：底部內收、中段外鼓）。不畫則由「底部收縮」參數控制。',
+    '左边虚线＝浴缸中心线。<b>由下往上</b>画出单边外墙曲线（例：底部内收、中段外鼓）。不画则由「底部收缩」参数控制。',
+    'Dashed line on the left = tub centerline. Draw one side wall curve <b>from bottom to top</b> (e.g. tapered base, bulging middle). If skipped, the "Base taper" slider is used instead.'
+  ]
+};
+function t(key){
+  if(LANG === 'zhT') return key;
+  const e = I18N[key];
+  return e ? e[LANG === 'zhS' ? 0 : 1] : key;
+}
+const i18nNodes = [];
+function collectI18nNodes(){
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let n;
+  while(n = w.nextNode()){
+    const s = n.textContent.trim();
+    if(I18N[s]) i18nNodes.push([n, s]);
+  }
+}
+function applyLang(){
+  i18nNodes.forEach(([n, key])=>{ n.textContent = t(key); });
+  const li = LANG === 'zhT' ? 0 : (LANG === 'zhS' ? 1 : 2);
+  Object.keys(I18N_HTML).forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.innerHTML = I18N_HTML[id][li];
+  });
+  document.getElementById('custName').placeholder = t('客戶姓名 / Customer Name');
+  document.getElementById('custNote').placeholder = t('備註 / Notes（例：需加裝溢水口）');
+  document.documentElement.lang = LANG === 'en' ? 'en' : (LANG === 'zhS' ? 'zh-Hans' : 'zh-Hant');
+  if(typeof padTop !== 'undefined'){ padTop.redraw(); padSide.redraw(); }
+  if(typeof updateSpec === 'function' && tubGroup) updateSpec();
+}
+function setLang(l, btn){
+  LANG = l;
+  document.querySelectorAll('.lang-sw button').forEach(b=>b.classList.toggle('active', b.dataset.lang === l));
+  applyLang();
+}
 
 // ===================== Three.js 場景 =====================
 const canvas = document.getElementById('canvas3d');
@@ -347,18 +490,27 @@ function loftGeometry(pts, L, z0, k0, bulge, H, dH){
 }
 
 // 環帶（缸緣：外頂環 → 內頂環）
+// 缸緣造型：flat 平面直接相連；round 圓弧＝半圓滾邊向上鼓起；bevel 斜角＝中間隆起的兩段斜面
 function stripGeometry(ptsA, LA, ptsB, LB, H, dH){
+  const RM = (P.rim === 'flat') ? 1 : 10;
+  const rise = P.t * 0.5;                                    // 隆起高度 = 壁厚一半
+  const bump = u => P.rim === 'round' ? Math.sin(u*Math.PI)*rise
+              : P.rim === 'bevel' ? (u < 0.5 ? u*2 : (1-u)*2)*rise
+              : 0;
   const pos=[], idx=[];
-  for(let i=0;i<N_SEG;i++){
-    const [xa,ya]=ptsA[i]; pos.push(xa, rimH(xa,LA,H,dH), ya);
+  for(let m=0;m<=RM;m++){
+    const u = m/RM;
+    for(let i=0;i<N_SEG;i++){
+      const [xa,ya]=ptsA[i], [xb,yb]=ptsB[i];
+      const x = xa+(xb-xa)*u, y = ya+(yb-ya)*u;
+      pos.push(x, rimH(x, LA+(LB-LA)*u, H, dH) + bump(u), y);
+    }
   }
-  for(let i=0;i<N_SEG;i++){
-    const [xb,yb]=ptsB[i]; pos.push(xb, rimH(xb,LB,H,dH), yb);
-  }
-  for(let i=0;i<N_SEG;i++){
-    const a=i, b=(i+1)%N_SEG, c=i+N_SEG, d=(i+1)%N_SEG+N_SEG;
-    idx.push(a,b,c, b,d,c);
-  }
+  for(let m=0;m<RM;m++)
+    for(let i=0;i<N_SEG;i++){
+      const a=m*N_SEG+i, b=m*N_SEG+(i+1)%N_SEG, c=a+N_SEG, d=b+N_SEG;
+      idx.push(a,b,c, b,d,c);
+    }
   const g=new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
   g.setIndex(idx);
@@ -471,16 +623,17 @@ function computeSpec(){
 function updateSpec(){
   const s = computeSpec();
   const rows = [
-    ['缸口造型', P.shape==='custom' ? '✏️ 手繪自訂' : {rect:'圓角矩形',stadium:'圓端形',ellipse:'橢圓形'}[P.shape]],
-    ['外部尺寸 (長×寬)', `${P.L} × ${P.W} mm`],
-    ['缸緣高度 前端 / 後端', `${P.H} / ${P.H+P.dH} mm`],
-    ['內部尺寸 (長×寬)', `${s.inn.L} × ${s.inn.W} mm`],
-    ['內部深度 (前端)', `${s.inn.D} mm`],
-    ['底部尺寸 (收縮後)', `${Math.round(P.L*baseK())} × ${Math.round(P.W*baseK())} mm${(P.customProfile && P.shape==='custom') ? '（手繪剖面）' : ''}`],
-    ['滿水容量 (估)', `${s.fullVol.toFixed(0)} L`],
-    ['建議使用水量 (八成滿)', `${s.useVol.toFixed(0)} L`],
-    ['估計缸體重量 (壓克力)', `${s.weight.toFixed(1)} kg`],
-    ['排水孔位置', {center:'中央', back:'靠背端', front:'前端'}[P.drain]],
+    [t('缸口造型'), P.shape==='custom' ? t('✏️ 手繪自訂') : t({rect:'圓角矩形',stadium:'圓端形',ellipse:'橢圓形'}[P.shape])],
+    [t('外部尺寸 (長×寬)'), `${P.L} × ${P.W} mm`],
+    [t('缸緣高度 前端 / 後端'), `${P.H} / ${P.H+P.dH} mm`],
+    [t('缸緣造型'), t({flat:'平面', round:'圓弧', bevel:'斜角'}[P.rim])],
+    [t('內部尺寸 (長×寬)'), `${s.inn.L} × ${s.inn.W} mm`],
+    [t('內部深度 (前端)'), `${s.inn.D} mm`],
+    [t('底部尺寸 (收縮後)'), `${Math.round(P.L*baseK())} × ${Math.round(P.W*baseK())} mm${(P.customProfile && P.shape==='custom') ? t('（手繪剖面）') : ''}`],
+    [t('滿水容量 (估)'), `${s.fullVol.toFixed(0)} L`],
+    [t('建議使用水量 (八成滿)'), `${s.useVol.toFixed(0)} L`],
+    [t('估計缸體重量 (壓克力)'), `${s.weight.toFixed(1)} kg`],
+    [t('排水孔位置'), t({center:'中央', back:'靠背端', front:'前端'}[P.drain])],
   ];
   document.getElementById('spec').innerHTML = rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
 }
@@ -517,7 +670,7 @@ function exportDXF(){
   // ---------- 標題 ----------
   const topY = P.W/2 + gap;
   E.text(-P.L/2, topY + 270, 60, 'CUSTOM FREESTANDING BATHTUB - PRODUCTION DRAWING', 'TITLE');
-  E.text(-P.L/2, topY + 180, 35, `DATE: ${new Date().toISOString().slice(0,10)}   UNIT: mm   SHAPE: ${P.shape.toUpperCase()}   CUSTOMER: ${document.getElementById('custName').value || '-'}`, 'TITLE');
+  E.text(-P.L/2, topY + 180, 35, `DATE: ${new Date().toISOString().slice(0,10)}   UNIT: mm   SHAPE: ${P.shape.toUpperCase()}   RIM: ${P.rim.toUpperCase()}   CUSTOMER: ${document.getElementById('custName').value || '-'}`, 'TITLE');
   E.text(-P.L/2, topY + 110, 35, `L=${P.L}  W=${P.W}  RIM H FRONT=${P.H} / BACK=${HB}  WALL=${P.t}  BOTTOM=${P.b}  EGG=${P.egg}%  BASE=${Math.round(s*100)}%${P.customPts?'  PLAN=SKETCHED':''}${P.customProfile?'  PROFILE=SKETCHED':''}`, 'TITLE');
   E.text(-P.L/2, topY + 40, 35, `CAPACITY=${spec.fullVol.toFixed(0)}L  NOTE: ${document.getElementById('custNote').value || '-'}`, 'TITLE');
 
@@ -574,6 +727,7 @@ function exportJSON(){
       缸緣高度_前端_mm: P.H, 缸緣高度_後端_mm: P.H+P.dH, 靠背增高_mm: P.dH,
       蛋形係數_pct: P.egg, 底部收縮_pct: P.taper,
       缸壁厚度_mm: P.t, 缸底厚度_mm: P.b, 圓角半徑_mm: P.r,
+      缸緣造型: {flat:'平面', round:'圓弧', bevel:'斜角'}[P.rim], rim_code: P.rim,
       排水孔位置: P.drain, 外觀顏色: P.color
     },
     計算規格: {
@@ -628,7 +782,13 @@ function setShape(s, btn){
 }
 function setDrain(d, btn){
   P.drain = d;
-  document.querySelectorAll('.drain-btns button').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.drain-btns button[data-drain]').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  buildTub();
+}
+function setRim(r, btn){
+  P.rim = r;
+  document.querySelectorAll('.rim-btns button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   buildTub();
 }
@@ -637,7 +797,7 @@ function setDrain(d, btn){
 function applyPhotoPreset(){
   Object.assign(P, { shape:'ellipse', L:1700, W:850, H:520, t:15, b:40, dH:130, egg:12, taper:72, drain:'front' });
   syncUI();
-  document.querySelectorAll('.drain-btns button').forEach(b=>b.classList.toggle('active', b.dataset.drain===P.drain));
+  document.querySelectorAll('.drain-btns button[data-drain]').forEach(b=>b.classList.toggle('active', b.dataset.drain===P.drain));
   buildTub();
 }
 
@@ -676,7 +836,7 @@ const padTop = makePad('padTop', (ctx, cv)=>{
   ctx.moveTo(10, cv.height/2); ctx.lineTo(cv.width-10, cv.height/2); ctx.stroke();
   ctx.setLineDash([]);
   ctx.fillStyle = '#bbb'; ctx.font = '11px sans-serif';
-  ctx.fillText('畫一個封閉的缸口形狀', 12, 18);
+  ctx.fillText(t('畫一個封閉的缸口形狀'), 12, 18);
 });
 const padSide = makePad('padSide', (ctx, cv)=>{
   ctx.strokeStyle = '#e67e22'; ctx.setLineDash([6,4]); ctx.lineWidth = 1.5;
@@ -686,9 +846,9 @@ const padSide = makePad('padSide', (ctx, cv)=>{
   ctx.beginPath(); ctx.moveTo(10, cv.height-30); ctx.lineTo(cv.width-10, cv.height-30);  // 地面
   ctx.moveTo(10, 30); ctx.lineTo(cv.width-10, 30); ctx.stroke();                          // 缸緣
   ctx.fillStyle = '#bbb'; ctx.font = '11px sans-serif';
-  ctx.fillText('中心線', 6, cv.height/2 - 40);
-  ctx.fillText('缸緣（上）', cv.width-70, 24);
-  ctx.fillText('缸底（下）', cv.width-70, cv.height-16);
+  ctx.fillText(t('中心線'), 6, cv.height/2 - 40);
+  ctx.fillText(t('缸緣（上）'), cv.width-80, 24);
+  ctx.fillText(t('缸底（下）'), cv.width-80, cv.height-16);
 });
 
 function clearPad(which){
@@ -781,7 +941,7 @@ document.getElementById('uplTop').addEventListener('change', e=>{
   img.onload = ()=>{
     try {
       const contour = traceImage(img);
-      if(!contour){ skErr('⚠ 偵測不到封閉形狀。請用深色筆在白紙上畫封閉輪廓，光線均勻、對比清楚。'); return; }
+      if(!contour){ skErr(t('⚠ 偵測不到封閉形狀。請用深色筆在白紙上畫封閉輪廓，光線均勻、對比清楚。')); return; }
       skErr('');
       // 縮放到畫布並顯示
       const cv = document.getElementById('padTop');
@@ -791,7 +951,7 @@ document.getElementById('uplTop').addEventListener('change', e=>{
       padTop.pts = contour.map(p=>[(p[0]-minX)*sc+20, (p[1]-minY)*sc+20]);
       uploadedContour = padTop.pts;
       padTop.redraw();
-    } catch(err){ skErr('⚠ 圖片處理失敗：' + err.message); }
+    } catch(err){ skErr(t('⚠ 圖片處理失敗：') + err.message); }
   };
   img.src = URL.createObjectURL(file);
   e.target.value = '';
@@ -889,7 +1049,7 @@ function traceImage(img){
 function confirmSketch(){
   const raw = uploadedContour || padTop.pts;
   const norm = processTopSketch(raw);
-  if(!norm){ skErr('⚠ 請先畫出（或上傳）一個封閉的缸口形狀，線條要夠長。'); return; }
+  if(!norm){ skErr(t('⚠ 請先畫出（或上傳）一個封閉的缸口形狀，線條要夠長。')); return; }
   P.customPts = norm;
   P.customProfile = processSideSketch(padSide.pts);   // 沒畫 → null → 用參數剖面
   P.shape = 'custom';
@@ -955,11 +1115,18 @@ function animate(){
   updateCamera();
   renderer.render(scene, camera);
 }
-// 支援網址參數：?preset=photo 直接載入照片款；?phi=2.6 指定視角（可分享連結）
+// 支援網址參數：?preset=photo 直接載入照片款；?phi=2.6 指定視角；?lang=en 指定語言（可分享連結）
 const q = new URLSearchParams(location.search);
 if(q.get('preset') === 'photo') applyPhotoPreset();
 if(q.get('phi')) orbit.phi = +q.get('phi');
 if(q.get('theta')) orbit.theta = +q.get('theta');
+collectI18nNodes();
+const ql = q.get('lang');
+if(ql && ['zhT','zhS','en'].includes(ql)){
+  LANG = ql;
+  document.querySelectorAll('.lang-sw button').forEach(b=>b.classList.toggle('active', b.dataset.lang === ql));
+  applyLang();
+}
 buildTub();
 animate();
 </script>
