@@ -414,20 +414,35 @@ function buildTub(){
   drain.position.set(d.x, P.b+4, d.y);
   tubGroup.add(drain);
 
-  // 水位模擬（藍色半透明 = 水）
+  // 水位模擬（藍色半透明 = 水）：沿內壁放樣的水體，水面平坦、高度 = 內部深度的八成
   if(P.water){
-    const wd = inn.D*0.72, wl = P.b + wd;
-    const vw = wd/inn.D, kw = wallK(vw, s, 1.03)*0.97;
-    // 注意：ExtrudeGeometry 經 rotateX(-90°) 後 z=-y，須先鏡射 y 才會與缸體放樣座標一致（不對稱形狀才對得上）
-    const shape = new THREE.Shape();
-    innerPts.forEach((p,i)=>{ i===0 ? shape.moveTo(p[0]*kw, -p[1]*kw) : shape.lineTo(p[0]*kw, -p[1]*kw); });
-    shape.closePath();
-    const water = new THREE.Mesh(
-      new THREE.ExtrudeGeometry(shape, {depth:wd, bevelEnabled:false}),
-      new THREE.MeshStandardMaterial({color:0x7ec8e3, transparent:true, opacity:0.55, roughness:0.1})
+    const wd = inn.D*0.8, wl = P.b + wd;
+    const WM = 10, wpos = [], widx = [];
+    for(let m=0;m<=WM;m++){
+      const z = P.b + wd*m/WM;
+      for(let i=0;i<N_SEG;i++){
+        const [x,y] = innerPts[i];
+        const vEff = (z - P.b) / Math.max(1, rimH(x, inn.L, P.H, P.dH) - P.b);   // 對應內壁的高度參數
+        const k = wallK(vEff, s, 1.03) * 0.985;
+        wpos.push(x*k, z, y*k);
+      }
+    }
+    for(let m=0;m<WM;m++)
+      for(let i=0;i<N_SEG;i++){
+        const a=m*N_SEG+i, b2=m*N_SEG+(i+1)%N_SEG, c=a+N_SEG, d=b2+N_SEG;
+        widx.push(a,c,b2, b2,c,d);
+      }
+    // 平坦水面（頂蓋）
+    const centerIdx = wpos.length/3;
+    wpos.push(0, wl, 0);
+    for(let i=0;i<N_SEG;i++) widx.push(centerIdx, WM*N_SEG+i, WM*N_SEG+(i+1)%N_SEG);
+    const wg = new THREE.BufferGeometry();
+    wg.setAttribute('position', new THREE.Float32BufferAttribute(wpos,3));
+    wg.setIndex(widx);
+    wg.computeVertexNormals();
+    const water = new THREE.Mesh(wg,
+      new THREE.MeshStandardMaterial({color:0x7ec8e3, transparent:true, opacity:0.55, roughness:0.1, side:THREE.DoubleSide})
     );
-    water.rotation.x = -Math.PI/2;
-    water.position.y = wl;
     tubGroup.add(water);
   }
 
@@ -446,7 +461,7 @@ function computeSpec(){
   const Ai = shoelace(outlinePts(P.shape, inn.L, inn.W, inn.r, P.egg, N_SEG));
   const Ao = shoelace(outlinePts(P.shape, P.L, P.W, P.r, P.egg, N_SEG));
   const fullVol = Ai*inn.D*taperF/1e6;
-  const useVol = fullVol*0.72;
+  const useVol = fullVol*0.8;                   // 與水位模擬一致：八成滿
   const Hmid = P.H + P.dH/2;
   const shellVol = Ao*Hmid*taperF - Ai*(Hmid-P.b)*taperF;
   const weight = shellVol*1.19e-6;
@@ -463,7 +478,7 @@ function updateSpec(){
     ['內部深度 (前端)', `${s.inn.D} mm`],
     ['底部尺寸 (收縮後)', `${Math.round(P.L*baseK())} × ${Math.round(P.W*baseK())} mm${(P.customProfile && P.shape==='custom') ? '（手繪剖面）' : ''}`],
     ['滿水容量 (估)', `${s.fullVol.toFixed(0)} L`],
-    ['建議使用水量', `${s.useVol.toFixed(0)} L`],
+    ['建議使用水量 (八成滿)', `${s.useVol.toFixed(0)} L`],
     ['估計缸體重量 (壓克力)', `${s.weight.toFixed(1)} kg`],
     ['排水孔位置', {center:'中央', back:'靠背端', front:'前端'}[P.drain]],
   ];
