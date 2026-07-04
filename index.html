@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>客製化浴缸互動設計系統｜3D 渲染 → CAD 轉換</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif; }
+  body { display:flex; flex-direction:column; height:100vh; overflow:hidden; background:#f0f2f5; }
+  header { background:#1a2b3c; color:#fff; padding:10px 20px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+  header h1 { font-size:17px; font-weight:600; }
+  header .sub { font-size:12px; color:#9db4cc; }
+  .btns { display:flex; gap:8px; }
+  .btn { border:none; border-radius:6px; padding:8px 14px; font-size:13px; cursor:pointer; font-weight:600; }
+  .btn-dxf { background:#e67e22; color:#fff; }
+  .btn-json { background:#2980b9; color:#fff; }
+  .btn:hover { filter:brightness(1.1); }
+  main { flex:1; display:flex; min-height:0; }
+  #panel { width:330px; background:#fff; overflow-y:auto; border-right:1px solid #dde3ea; padding:14px; flex-shrink:0; }
+  #viewer { flex:1; position:relative; min-width:0; }
+  #canvas3d { width:100%; height:100%; display:block; }
+  .group { margin-bottom:16px; border:1px solid #e5eaf0; border-radius:8px; padding:12px; }
+  .group h3 { font-size:13px; color:#1a2b3c; margin-bottom:10px; border-left:3px solid #e67e22; padding-left:8px; }
+  .row { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:8px; }
+  .row label { font-size:12.5px; color:#444; flex-shrink:0; }
+  .row input[type=range] { flex:1; accent-color:#e67e22; }
+  .row .val { width:74px; text-align:right; }
+  .row .val input { width:52px; font-size:12px; padding:2px 4px; border:1px solid #ccc; border-radius:4px; text-align:right; }
+  .row .val span { font-size:11px; color:#888; }
+  .shape-btns, .drain-btns { display:flex; gap:6px; flex-wrap:wrap; }
+  .shape-btns button, .drain-btns button { flex:1; min-width:60px; padding:7px 4px; font-size:12px; border:1px solid #ccc; background:#fafafa; border-radius:6px; cursor:pointer; }
+  .shape-btns button.active, .drain-btns button.active { background:#1a2b3c; color:#fff; border-color:#1a2b3c; }
+  .preset { width:100%; margin-top:8px; padding:8px; font-size:12.5px; border:1px dashed #e67e22; color:#e67e22; background:#fff7f0; border-radius:6px; cursor:pointer; font-weight:600; }
+  .preset:hover { background:#ffeede; }
+  .swatches { display:flex; gap:8px; align-items:center; }
+  .sw { width:26px; height:26px; border-radius:50%; border:2px solid #ddd; cursor:pointer; }
+  .sw.active { border-color:#e67e22; box-shadow:0 0 0 2px rgba(230,126,34,.3); }
+  .chk { display:flex; align-items:center; gap:6px; font-size:12.5px; color:#444; margin-bottom:6px; }
+  .tip { font-size:11px; color:#888; line-height:1.5; margin-top:4px; }
+  input[type=text] { width:100%; padding:6px 8px; font-size:12.5px; border:1px solid #ccc; border-radius:5px; margin-bottom:8px; }
+  #spec { font-size:12.5px; width:100%; border-collapse:collapse; }
+  #spec td { padding:4px 2px; border-bottom:1px dashed #e8e8e8; color:#333; }
+  #spec td:last-child { text-align:right; font-weight:600; color:#1a2b3c; }
+  .flow { font-size:11.5px; color:#666; line-height:1.7; background:#f7f9fb; border-radius:6px; padding:10px; }
+  .flow b { color:#e67e22; }
+  #hint { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); background:rgba(26,43,60,.75); color:#fff; font-size:11.5px; padding:6px 14px; border-radius:20px; pointer-events:none; }
+  #warn { color:#c0392b; font-size:12px; margin-top:4px; display:none; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🛁 客製化浴缸互動設計系統</h1>
+    <div class="sub">客戶自主設計 → 參數化 3D 預覽 → 一鍵輸出設計師可修改之 CAD (DXF) 圖檔 → 模具製造</div>
+  </div>
+  <div class="btns">
+    <button class="btn btn-dxf" onclick="exportDXF()">⬇ 下載 CAD 圖檔 (DXF)</button>
+    <button class="btn btn-json" onclick="exportJSON()">⬇ 下載規格表 (JSON)</button>
+  </div>
+</header>
+<main>
+  <div id="panel">
+    <div class="group">
+      <h3>① 浴缸造型（獨立式）</h3>
+      <div class="shape-btns">
+        <button data-shape="rect" onclick="setShape('rect',this)">圓角矩形</button>
+        <button data-shape="stadium" onclick="setShape('stadium',this)">圓端形</button>
+        <button data-shape="ellipse" class="active" onclick="setShape('ellipse',this)">橢圓形</button>
+      </div>
+      <button class="preset" onclick="applyPhotoPreset()">★ 套用照片款：不對稱蛋形缸</button>
+    </div>
+    <div class="group">
+      <h3>② 尺寸參數（mm）</h3>
+      <div class="row"><label>外部長度</label><input type="range" id="rL" min="1200" max="2200" step="10" value="1700"><div class="val"><input id="nL" value="1700"><span>mm</span></div></div>
+      <div class="row"><label>外部寬度</label><input type="range" id="rW" min="600" max="1200" step="10" value="850"><div class="val"><input id="nW" value="850"><span>mm</span></div></div>
+      <div class="row"><label>缸緣高度(前端)</label><input type="range" id="rH" min="400" max="750" step="10" value="550"><div class="val"><input id="nH" value="550"><span>mm</span></div></div>
+      <div class="row"><label>缸壁厚度</label><input type="range" id="rT" min="8" max="40" step="1" value="15"><div class="val"><input id="nT" value="15"><span>mm</span></div></div>
+      <div class="row"><label>缸底厚度</label><input type="range" id="rB" min="20" max="80" step="5" value="40"><div class="val"><input id="nB" value="40"><span>mm</span></div></div>
+      <div class="row" id="radiusRow" style="display:none"><label>圓角半徑</label><input type="range" id="rR" min="50" max="300" step="10" value="150"><div class="val"><input id="nR" value="150"><span>mm</span></div></div>
+      <div id="warn">⚠ 參數不合理：內部空間不足，請調整尺寸</div>
+    </div>
+    <div class="group">
+      <h3>③ 不對稱造型參數</h3>
+      <div class="row"><label>靠背增高(後端)</label><input type="range" id="rDH" min="0" max="250" step="10" value="0"><div class="val"><input id="nDH" value="0"><span>mm</span></div></div>
+      <div class="row"><label>蛋形係數</label><input type="range" id="rE" min="0" max="30" step="1" value="0"><div class="val"><input id="nE" value="0"><span>%</span></div></div>
+      <div class="row"><label>底部收縮</label><input type="range" id="rS" min="60" max="100" step="1" value="100"><div class="val"><input id="nS" value="100"><span>%</span></div></div>
+      <div class="tip">靠背增高＝後端缸緣比前端高多少（缸緣呈斜面）｜蛋形係數＝前端變窄、後端變寬｜底部收縮＝缸底佔缸口的比例，數值越小側壁越內收</div>
+    </div>
+    <div class="group">
+      <h3>④ 排水孔位置</h3>
+      <div class="drain-btns">
+        <button data-drain="center" class="active" onclick="setDrain('center',this)">中央</button>
+        <button data-drain="back" onclick="setDrain('back',this)">靠背端</button>
+        <button data-drain="front" onclick="setDrain('front',this)">前端</button>
+      </div>
+    </div>
+    <div class="group">
+      <h3>⑤ 外觀顏色</h3>
+      <div class="swatches">
+        <div class="sw active" style="background:#f5f5f0" data-c="#f5f5f0" title="經典白"></div>
+        <div class="sw" style="background:#2b2b2b" data-c="#2b2b2b" title="霧黑"></div>
+        <div class="sw" style="background:#9aa5ad" data-c="#9aa5ad" title="石灰"></div>
+        <div class="sw" style="background:#e8dcc8" data-c="#e8dcc8" title="奶油米"></div>
+        <div class="sw" style="background:#5d7b6f" data-c="#5d7b6f" title="莫蘭迪綠"></div>
+        <input type="color" id="customColor" value="#f5f5f0" style="width:32px;height:28px;border:none;background:none;cursor:pointer" title="自訂顏色">
+      </div>
+      <div class="chk" style="margin-top:10px"><input type="checkbox" id="waterToggle"><label for="waterToggle">顯示水位模擬（藍色半透明＝水）</label></div>
+    </div>
+    <div class="group">
+      <h3>⑥ 訂單資訊（輸出至 CAD / 規格表）</h3>
+      <input type="text" id="custName" placeholder="客戶姓名 / Customer Name">
+      <input type="text" id="custNote" placeholder="備註 / Notes（例：需加裝溢水口）">
+    </div>
+    <div class="group">
+      <h3>⑦ 即時規格計算</h3>
+      <table id="spec"></table>
+    </div>
+    <div class="group">
+      <h3>製程流程</h3>
+      <div class="flow">
+        <b>客戶端</b>：於本頁面依想像調整造型與參數，3D 即時預覽<br>
+        <b>↓ 一鍵輸出</b><br>
+        <b>設計端</b>：DXF 三視圖（AutoCAD 可直接開啟修改）＋ JSON 規格表<br>
+        <b>↓ 設計師確認 / 微調</b><br>
+        <b>製造端</b>：依 CAD 圖進行模具開發與生產
+      </div>
+    </div>
+  </div>
+  <div id="viewer">
+    <canvas id="canvas3d"></canvas>
+    <div id="hint">拖曳＝360° 自由旋轉（含仰視）｜滾輪＝縮放</div>
+  </div>
+</main>
+
+<script>
+// ===================== 狀態 =====================
+const P = {
+  shape:'ellipse', L:1700, W:850, H:550, t:15, b:40, r:150,
+  dH:0, egg:0, taper:100,           // 不對稱參數：靠背增高 / 蛋形% / 底部收縮%
+  drain:'center', color:'#f5f5f0', water:false
+};
+
+// ===================== Three.js 場景 =====================
+const canvas = document.getElementById('canvas3d');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(window.devicePixelRatio);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xe9edf2);
+
+const camera = new THREE.PerspectiveCamera(42, 1, 10, 30000);
+let orbit = { theta: Math.PI/4, phi: Math.PI/3.2, radius: 3400, target: new THREE.Vector3(0, 280, 0) };
+
+function updateCamera(){
+  // 全方位旋轉：允許轉到浴缸下方仰視（phi 接近 0=正上方、π=正下方）
+  orbit.phi = Math.max(0.05, Math.min(Math.PI - 0.05, orbit.phi));
+  orbit.radius = Math.max(1200, Math.min(9000, orbit.radius));
+  const s = Math.sin(orbit.phi), c = Math.cos(orbit.phi);
+  camera.position.set(
+    orbit.target.x + orbit.radius * s * Math.cos(orbit.theta),
+    orbit.target.y + orbit.radius * c,
+    orbit.target.z + orbit.radius * s * Math.sin(orbit.theta)
+  );
+  camera.lookAt(orbit.target);
+}
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb0b8c0, 0.9));
+const dir = new THREE.DirectionalLight(0xffffff, 0.75);
+dir.position.set(1500, 2500, 1200);
+scene.add(dir);
+const dir2 = new THREE.DirectionalLight(0xfff2e0, 0.3);
+dir2.position.set(-1800, 1200, -1000);
+scene.add(dir2);
+
+// 地板（單面材質：轉到下方仰視時地板自動消失，不會擋住視線）
+const floor = new THREE.Mesh(
+  new THREE.CircleGeometry(5000, 64),
+  new THREE.MeshStandardMaterial({color:0xdfe4ea, roughness:0.95})
+);
+floor.rotation.x = -Math.PI/2;
+scene.add(floor);
+const grid = new THREE.GridHelper(6000, 30, 0xc5ccd4, 0xd5dbe2);
+grid.position.y = 1;
+scene.add(grid);
+
+// ===================== 輪廓產生（平面外形） =====================
+function rawOutline(shape, L, W, r){
+  const hl=L/2, hw=W/2, pts=[];
+  if(shape === 'ellipse'){
+    for(let i=0;i<192;i++){ const a=i/192*Math.PI*2; pts.push([hl*Math.cos(a), hw*Math.sin(a)]); }
+  } else {
+    const rad = (shape==='stadium') ? hw : Math.min(r, hl-1, hw-1);
+    const seg=24;
+    const arc=(cx,cy,a0,a1)=>{ for(let i=0;i<=seg;i++){ const a=a0+(a1-a0)*i/seg; pts.push([cx+rad*Math.cos(a), cy+rad*Math.sin(a)]); } };
+    pts.push([hl,-hw+rad]);            // 從右側開始，與橢圓的角度 0 對齊
+    arc(hl-rad, hw-rad, 0, Math.PI/2);
+    pts.push([-hl+rad, hw]);
+    arc(-hl+rad, hw-rad, Math.PI/2, Math.PI);
+    pts.push([-hl, -hw+rad]);
+    arc(-hl+rad, -hw+rad, Math.PI, Math.PI*1.5);
+    pts.push([hl-rad, -hw]);
+    arc(hl-rad, -hw+rad, -Math.PI/2, 0);
+  }
+  return pts;
+}
+
+// 均勻弧長重取樣為 N 點（閉合）
+function resample(pts, N){
+  const d=[0];
+  for(let i=1;i<=pts.length;i++){
+    const a=pts[i-1], b=pts[i%pts.length];
+    d.push(d[i-1]+Math.hypot(b[0]-a[0], b[1]-a[1]));
+  }
+  const total=d[pts.length], out=[];
+  let j=0;
+  for(let k=0;k<N;k++){
+    const target=k/N*total;
+    while(d[j+1]<target) j++;
+    const f=(target-d[j])/(d[j+1]-d[j] || 1);
+    const a=pts[j], b=pts[(j+1)%pts.length];
+    out.push([a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f]);
+  }
+  return out;
+}
+
+// 最終平面輪廓：套用蛋形係數（前端 +x 變窄、後端 -x 變寬）
+function outlinePts(shape, L, W, r, eggPct, N){
+  const e = eggPct/100;
+  return resample(rawOutline(shape,L,W,r), N||96).map(p=>{
+    const xn = p[0]/(L/2);
+    return [p[0], p[1]*(1 - e*xn)];
+  });
+}
+
+// 缸緣高度：沿長度方向線性變化（後端 -x 較高）
+function rimH(x, L, H, dH){
+  const xn = Math.max(-1, Math.min(1, x/(L/2)));
+  return H + dH*(1-xn)/2;
+}
+
+function shoelace(pts){
+  let a=0;
+  for(let i=0;i<pts.length;i++){ const p=pts[i], q=pts[(i+1)%pts.length]; a += p[0]*q[1]-q[0]*p[1]; }
+  return Math.abs(a)/2;
+}
+
+// 二次貝茲：底部收縮 → 中段外鼓 → 缸口
+function bez(k0, c, v){ const u=1-v; return u*u*k0 + 2*u*v*c + v*v*1; }
+
+// ===================== 曲面放樣建模 =====================
+let tubGroup = null;
+const N_SEG = 96, M_RING = 16;
+
+function innerDims(){
+  return { L:P.L-2*P.t, W:P.W-2*P.t, D:P.H-P.b, r:Math.max(P.r-P.t,10) };
+}
+
+// 放樣曲面：由底環(z0, 縮放k0)漸變至缸緣(rimH(x), 縮放1)
+function loftGeometry(pts, L, z0, k0, bulge, H, dH){
+  const pos=[], idx=[];
+  for(let m=0;m<=M_RING;m++){
+    const v=m/M_RING, k=bez(k0, 1+bulge, v);
+    for(let i=0;i<N_SEG;i++){
+      const [x,y]=pts[i];
+      const zTop=rimH(x, L, H, dH);
+      pos.push(x*k, z0+v*(zTop-z0), y*k);
+    }
+  }
+  for(let m=0;m<M_RING;m++)
+    for(let i=0;i<N_SEG;i++){
+      const a=m*N_SEG+i, b=m*N_SEG+(i+1)%N_SEG, c=a+N_SEG, d=b+N_SEG;
+      idx.push(a,c,b, b,c,d);
+    }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+// 環帶（缸緣：外頂環 → 內頂環）
+function stripGeometry(ptsA, LA, ptsB, LB, H, dH){
+  const pos=[], idx=[];
+  for(let i=0;i<N_SEG;i++){
+    const [xa,ya]=ptsA[i]; pos.push(xa, rimH(xa,LA,H,dH), ya);
+  }
+  for(let i=0;i<N_SEG;i++){
+    const [xb,yb]=ptsB[i]; pos.push(xb, rimH(xb,LB,H,dH), yb);
+  }
+  for(let i=0;i<N_SEG;i++){
+    const a=i, b=(i+1)%N_SEG, c=i+N_SEG, d=(i+1)%N_SEG+N_SEG;
+    idx.push(a,b,c, b,d,c);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+// 平面封蓋（底板 / 缸內底面）
+function capGeometry(pts, k, z){
+  const pos=[0*1,z,0], idx=[];
+  for(let i=0;i<N_SEG;i++) pos.push(pts[i][0]*k, z, pts[i][1]*k);
+  for(let i=0;i<N_SEG;i++) idx.push(0, i+1, (i+1)%N_SEG+1);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+function drainXY(){
+  const inn=innerDims(), s=P.taper/100;
+  const reach = inn.L/2*s - 130;
+  if(P.drain==='back')  return {x:-reach, y:0};
+  if(P.drain==='front') return {x: reach, y:0};
+  return {x:0, y:0};
+}
+
+function buildTub(){
+  if(tubGroup){ scene.remove(tubGroup); tubGroup.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); }); }
+  tubGroup = new THREE.Group();
+  const inn = innerDims();
+  const valid = inn.L>100 && inn.W>100 && inn.D>100;
+  document.getElementById('warn').style.display = valid ? 'none' : 'block';
+  if(!valid){ scene.add(tubGroup); return; }
+
+  const s = P.taper/100;
+  const outerPts = outlinePts(P.shape, P.L, P.W, P.r, P.egg, N_SEG);
+  const innerPts = outlinePts(P.shape, inn.L, inn.W, inn.r, P.egg, N_SEG);
+  const mat = new THREE.MeshStandardMaterial({ color:P.color, roughness:0.22, metalness:0.05, side:THREE.DoubleSide });
+
+  tubGroup.add(new THREE.Mesh(loftGeometry(outerPts, P.L, 0,   s, 0.07, P.H, P.dH), mat)); // 外殼
+  tubGroup.add(new THREE.Mesh(loftGeometry(innerPts, inn.L, P.b, s, 0.03, P.H, P.dH), mat)); // 內壁
+  tubGroup.add(new THREE.Mesh(stripGeometry(outerPts, P.L, innerPts, inn.L, P.H, P.dH), mat)); // 缸緣
+  tubGroup.add(new THREE.Mesh(capGeometry(outerPts, s, 0), mat));   // 底封板
+  tubGroup.add(new THREE.Mesh(capGeometry(innerPts, s, P.b), mat)); // 缸內底面
+
+  // 排水孔
+  const d = drainXY();
+  const drain = new THREE.Mesh(
+    new THREE.CylinderGeometry(26, 26, 8, 32),
+    new THREE.MeshStandardMaterial({color:0x666e75, metalness:0.8, roughness:0.3})
+  );
+  drain.position.set(d.x, P.b+4, d.y);
+  tubGroup.add(drain);
+
+  // 水位模擬（藍色半透明 = 水）
+  if(P.water){
+    const wd = inn.D*0.72, wl = P.b + wd;
+    const vw = wd/inn.D, kw = bez(s, 1.03, vw)*0.97;
+    const shape = new THREE.Shape();
+    innerPts.forEach((p,i)=>{ i===0 ? shape.moveTo(p[0]*kw, p[1]*kw) : shape.lineTo(p[0]*kw, p[1]*kw); });
+    shape.closePath();
+    const water = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(shape, {depth:wd, bevelEnabled:false}),
+      new THREE.MeshStandardMaterial({color:0x7ec8e3, transparent:true, opacity:0.55, roughness:0.1})
+    );
+    water.rotation.x = -Math.PI/2;
+    water.position.y = wl;
+    tubGroup.add(water);
+  }
+
+  scene.add(tubGroup);
+  orbit.target.set(0, (P.H+P.dH/2)/2, 0);
+  updateSpec();
+}
+
+// ===================== 規格計算 =====================
+function computeSpec(){
+  const inn = innerDims(), s = P.taper/100, taperF = (1+s+s*s)/3;
+  const Ai = shoelace(outlinePts(P.shape, inn.L, inn.W, inn.r, P.egg, N_SEG));
+  const Ao = shoelace(outlinePts(P.shape, P.L, P.W, P.r, P.egg, N_SEG));
+  const fullVol = Ai*inn.D*taperF/1e6;
+  const useVol = fullVol*0.72;
+  const Hmid = P.H + P.dH/2;
+  const shellVol = Ao*Hmid*taperF - Ai*(Hmid-P.b)*taperF;
+  const weight = shellVol*1.19e-6;
+  return { inn, fullVol, useVol, weight };
+}
+
+function updateSpec(){
+  const s = computeSpec();
+  const rows = [
+    ['外部尺寸 (長×寬)', `${P.L} × ${P.W} mm`],
+    ['缸緣高度 前端 / 後端', `${P.H} / ${P.H+P.dH} mm`],
+    ['內部尺寸 (長×寬)', `${s.inn.L} × ${s.inn.W} mm`],
+    ['內部深度 (前端)', `${s.inn.D} mm`],
+    ['底部尺寸 (收縮後)', `${Math.round(P.L*P.taper/100)} × ${Math.round(P.W*P.taper/100)} mm`],
+    ['滿水容量 (估)', `${s.fullVol.toFixed(0)} L`],
+    ['建議使用水量', `${s.useVol.toFixed(0)} L`],
+    ['估計缸體重量 (壓克力)', `${s.weight.toFixed(1)} kg`],
+    ['排水孔位置', {center:'中央', back:'靠背端', front:'前端'}[P.drain]],
+  ];
+  document.getElementById('spec').innerHTML = rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+}
+
+// ===================== DXF 輸出 =====================
+let dxf = '';
+const E = {
+  line:(x1,y1,x2,y2,layer)=>{ dxf += `0\nLINE\n8\n${layer}\n10\n${x1.toFixed(2)}\n20\n${y1.toFixed(2)}\n11\n${x2.toFixed(2)}\n21\n${y2.toFixed(2)}\n`; },
+  circle:(x,y,r,layer)=>{ dxf += `0\nCIRCLE\n8\n${layer}\n10\n${x.toFixed(2)}\n20\n${y.toFixed(2)}\n40\n${r.toFixed(2)}\n`; },
+  text:(x,y,h,str,layer)=>{ dxf += `0\nTEXT\n8\n${layer}\n10\n${x.toFixed(2)}\n20\n${y.toFixed(2)}\n40\n${h}\n1\n${str}\n`; },
+  poly:(pts,ox,oy,layer)=>{ for(let i=0;i<pts.length;i++){ const a=pts[i], b=pts[(i+1)%pts.length]; E.line(a[0]+ox, a[1]+oy, b[0]+ox, b[1]+oy, layer); } },
+  path:(pts,ox,oy,layer)=>{ for(let i=0;i<pts.length-1;i++){ E.line(pts[i][0]+ox, pts[i][1]+oy, pts[i+1][0]+ox, pts[i+1][1]+oy, layer); } }
+};
+
+// 端點側壁剖面線（放樣曲線投影）
+function endProfile(sign, L, H, dH, s, bulge){
+  const pts=[];
+  for(let m=0;m<=12;m++){
+    const v=m/12, k=bez(s, 1+bulge, v);
+    const x=sign*(L/2)*k;
+    pts.push([x, v*rimH(sign*L/2, L, H, dH)]);
+  }
+  return pts;
+}
+
+function exportDXF(){
+  const inn = innerDims(), spec = computeSpec(), s = P.taper/100;
+  const HB = P.H + P.dH;
+  const gap = 350;
+  const outerPts = outlinePts(P.shape, P.L, P.W, P.r, P.egg, 96);
+  const innerPts = outlinePts(P.shape, inn.L, inn.W, inn.r, P.egg, 96);
+  dxf = '0\nSECTION\n2\nENTITIES\n';
+
+  // ---------- 標題 ----------
+  const topY = P.W/2 + gap;
+  E.text(-P.L/2, topY + 270, 60, 'CUSTOM FREESTANDING BATHTUB - PRODUCTION DRAWING', 'TITLE');
+  E.text(-P.L/2, topY + 180, 35, `DATE: ${new Date().toISOString().slice(0,10)}   UNIT: mm   SHAPE: ${P.shape.toUpperCase()}   CUSTOMER: ${document.getElementById('custName').value || '-'}`, 'TITLE');
+  E.text(-P.L/2, topY + 110, 35, `L=${P.L}  W=${P.W}  RIM H FRONT=${P.H} / BACK=${HB}  WALL=${P.t}  BOTTOM=${P.b}  EGG=${P.egg}%  BASE TAPER=${P.taper}%`, 'TITLE');
+  E.text(-P.L/2, topY + 40, 35, `CAPACITY=${spec.fullVol.toFixed(0)}L  NOTE: ${document.getElementById('custNote').value || '-'}`, 'TITLE');
+
+  // ---------- 俯視圖 TOP VIEW ----------
+  E.poly(outerPts, 0, 0, 'OUTLINE');                                  // 缸口外緣
+  E.poly(innerPts, 0, 0, 'OUTLINE');                                  // 缸口內緣
+  E.poly(outerPts.map(p=>[p[0]*s, p[1]*s]), 0, 0, 'HIDDEN');          // 底部輪廓（收縮後）
+  const d = drainXY();
+  E.circle(d.x, d.y, 26, 'OUTLINE');
+  E.line(-P.L/2-80, 0, P.L/2+80, 0, 'CENTER');
+  E.line(0, -P.W/2-80, 0, P.W/2+80, 'CENTER');
+  E.text(-P.L/2, P.W/2+60, 40, 'TOP VIEW (DASHED=BASE FOOTPRINT)', 'TEXT');
+  E.text(-P.L/2, -P.W/2-120, 32, `L=${P.L} / INNER L=${inn.L} / BASE L=${Math.round(P.L*s)}`, 'DIM');
+  E.text(P.L/2+100, 0, 32, `W=${P.W} / INNER W=${inn.W}`, 'DIM');
+
+  // ---------- 前視圖 FRONT VIEW（可見缸緣斜面）----------
+  const fy = -(P.W/2 + gap + HB);
+  E.line(-P.L/2*s, fy, P.L/2*s, fy, 'OUTLINE');                       // 底邊
+  E.path(endProfile(1, P.L, P.H, P.dH, s, 0.07).map(p=>[p[0], fy+p[1]]), 0, 0, 'OUTLINE');   // 前端側壁曲線
+  E.path(endProfile(-1, P.L, P.H, P.dH, s, 0.07).map(p=>[p[0], fy+p[1]]), 0, 0, 'OUTLINE');  // 後端側壁曲線
+  E.line(-P.L/2, fy+HB, P.L/2, fy+P.H, 'OUTLINE');                    // 缸緣斜線（後高前低）
+  E.line(-inn.L/2, fy+P.b, inn.L/2, fy+P.b, 'HIDDEN');                // 缸內底面
+  E.text(-P.L/2, fy+HB+60, 40, 'FRONT VIEW (SLOPED RIM)', 'TEXT');
+  E.text(-P.L/2, fy-90, 32, `RIM H: BACK=${HB} FRONT=${P.H}  BOTTOM=${P.b}  INNER DEPTH=${inn.D}`, 'DIM');
+
+  // ---------- 側視圖 SIDE VIEW ----------
+  const sx = P.L/2 + gap + P.W/2;
+  E.line(sx-P.W/2*s, fy, sx+P.W/2*s, fy, 'OUTLINE');
+  E.path(endProfile(1, P.W, P.H+P.dH/2, 0, s, 0.07).map(p=>[sx+p[0], fy+p[1]]), 0, 0, 'OUTLINE');
+  E.path(endProfile(-1, P.W, P.H+P.dH/2, 0, s, 0.07).map(p=>[sx+p[0], fy+p[1]]), 0, 0, 'OUTLINE');
+  E.line(sx-P.W/2, fy+HB, sx+P.W/2, fy+HB, 'OUTLINE');                // 後端缸緣（高）
+  E.line(sx-P.W/2, fy+P.H, sx+P.W/2, fy+P.H, 'HIDDEN');               // 前端缸緣（低，虛線）
+  E.text(sx-P.W/2, fy+HB+60, 40, 'SIDE VIEW', 'TEXT');
+  E.text(sx-P.W/2, fy-90, 32, `W=${P.W}  WALL=${P.t}  BASE W=${Math.round(P.W*s)}`, 'DIM');
+
+  dxf += '0\nENDSEC\n0\nEOF\n';
+  download(dxf, `bathtub_${P.L}x${P.W}x${P.H}-${HB}_${Date.now()}.dxf`, 'application/dxf');
+}
+
+// ===================== JSON 規格表輸出 =====================
+function exportJSON(){
+  const s = computeSpec();
+  const spec = {
+    文件類型: '客製化浴缸設計規格表',
+    產生時間: new Date().toISOString(),
+    客戶姓名: document.getElementById('custName').value || '',
+    備註: document.getElementById('custNote').value || '',
+    設計參數: {
+      造型: {rect:'圓角矩形', stadium:'圓端形', ellipse:'橢圓形'}[P.shape],
+      shape_code: P.shape,
+      外部長度_mm: P.L, 外部寬度_mm: P.W,
+      缸緣高度_前端_mm: P.H, 缸緣高度_後端_mm: P.H+P.dH, 靠背增高_mm: P.dH,
+      蛋形係數_pct: P.egg, 底部收縮_pct: P.taper,
+      缸壁厚度_mm: P.t, 缸底厚度_mm: P.b, 圓角半徑_mm: P.r,
+      排水孔位置: P.drain, 外觀顏色: P.color
+    },
+    計算規格: {
+      內部長度_mm: s.inn.L, 內部寬度_mm: s.inn.W, 內部深度_前端_mm: s.inn.D,
+      底部長度_mm: Math.round(P.L*P.taper/100), 底部寬度_mm: Math.round(P.W*P.taper/100),
+      滿水容量_L: +s.fullVol.toFixed(1), 建議使用水量_L: +s.useVol.toFixed(1),
+      估計重量_kg: +s.weight.toFixed(1), 材質假設: '壓克力 (密度 1.19 g/cm³)'
+    }
+  };
+  download(JSON.stringify(spec, null, 2), `bathtub_spec_${Date.now()}.json`, 'application/json');
+}
+
+function download(content, filename, mime){
+  const bom = filename.endsWith('.json') ? '﻿' : '';
+  const blob = new Blob([bom + content], {type: mime + ';charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ===================== UI 綁定 =====================
+const sliderMap = [
+  ['rL','nL','L'], ['rW','nW','W'], ['rH','nH','H'], ['rT','nT','t'],
+  ['rB','nB','b'], ['rR','nR','r'], ['rDH','nDH','dH'], ['rE','nE','egg'], ['rS','nS','taper']
+];
+sliderMap.forEach(([rid,nid,key])=>{
+  const r=document.getElementById(rid), n=document.getElementById(nid);
+  r.addEventListener('input', ()=>{ n.value=r.value; P[key]=+r.value; buildTub(); });
+  n.addEventListener('change', ()=>{
+    let v=Math.max(+r.min, Math.min(+r.max, +n.value || +r.min));
+    n.value=v; r.value=v; P[key]=v; buildTub();
+  });
+});
+
+function syncUI(){
+  sliderMap.forEach(([rid,nid,key])=>{
+    document.getElementById(rid).value = P[key];
+    document.getElementById(nid).value = P[key];
+  });
+  document.querySelectorAll('.shape-btns button').forEach(b=>b.classList.toggle('active', b.dataset.shape===P.shape));
+  document.getElementById('radiusRow').style.display = (P.shape==='rect') ? 'flex' : 'none';
+}
+
+function setShape(s, btn){
+  P.shape = s;
+  document.querySelectorAll('.shape-btns button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('radiusRow').style.display = (s==='rect') ? 'flex' : 'none';
+  buildTub();
+}
+function setDrain(d, btn){
+  P.drain = d;
+  document.querySelectorAll('.drain-btns button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  buildTub();
+}
+
+// 照片款預設：不對稱蛋形缸（後緣高、蛋形口、底部內收）
+function applyPhotoPreset(){
+  Object.assign(P, { shape:'ellipse', L:1700, W:850, H:520, t:15, b:40, dH:130, egg:12, taper:72, drain:'front' });
+  syncUI();
+  document.querySelectorAll('.drain-btns button').forEach(b=>b.classList.toggle('active', b.dataset.drain===P.drain));
+  buildTub();
+}
+
+document.querySelectorAll('.sw').forEach(sw=>{
+  sw.addEventListener('click', ()=>{
+    document.querySelectorAll('.sw').forEach(x=>x.classList.remove('active'));
+    sw.classList.add('active');
+    P.color = sw.dataset.c; buildTub();
+  });
+});
+document.getElementById('customColor').addEventListener('input', e=>{
+  document.querySelectorAll('.sw').forEach(x=>x.classList.remove('active'));
+  P.color = e.target.value; buildTub();
+});
+document.getElementById('waterToggle').addEventListener('change', e=>{ P.water = e.target.checked; buildTub(); });
+
+// ===================== 滑鼠 / 觸控（360° 自由旋轉） =====================
+let dragging=false, lastX=0, lastY=0, pinchD=0;
+canvas.addEventListener('pointerdown', e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; });
+window.addEventListener('pointermove', e=>{
+  if(!dragging) return;
+  orbit.theta += (e.clientX-lastX)*0.006;
+  orbit.phi   -= (e.clientY-lastY)*0.006;
+  lastX=e.clientX; lastY=e.clientY;
+});
+window.addEventListener('pointerup', ()=> dragging=false);
+canvas.addEventListener('wheel', e=>{ e.preventDefault(); orbit.radius *= (1+Math.sign(e.deltaY)*0.08); }, {passive:false});
+canvas.addEventListener('touchmove', e=>{
+  if(e.touches.length===2){
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+    const dNow=Math.hypot(dx,dy);
+    if(pinchD) orbit.radius *= pinchD/dNow;
+    pinchD=dNow;
+  }
+}, {passive:true});
+canvas.addEventListener('touchend', ()=> pinchD=0);
+
+// ===================== 主迴圈 =====================
+function resize(){
+  const w=canvas.clientWidth, h=canvas.clientHeight;
+  if(canvas.width !== w*devicePixelRatio || canvas.height !== h*devicePixelRatio){
+    renderer.setSize(w,h,false);
+    camera.aspect=w/h;
+    camera.updateProjectionMatrix();
+  }
+}
+function animate(){
+  requestAnimationFrame(animate);
+  resize();
+  updateCamera();
+  renderer.render(scene, camera);
+}
+// 支援網址參數：?preset=photo 直接載入照片款；?phi=2.6 指定視角（可分享連結）
+const q = new URLSearchParams(location.search);
+if(q.get('preset') === 'photo') applyPhotoPreset();
+if(q.get('phi')) orbit.phi = +q.get('phi');
+if(q.get('theta')) orbit.theta = +q.get('theta');
+buildTub();
+animate();
+</script>
+</body>
+</html>
